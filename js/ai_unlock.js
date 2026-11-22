@@ -1,311 +1,162 @@
-// AI & Global Media Region Checker for Surge
-// Service-specific signals are used. "Available" means the service's public region check passed,
-// not that a signed-in account, subscription, or every title is guaranteed to work.
+// Surge AI / Media availability checker
+const H = {
+  "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/124 Safari/537.36",
+  "Accept-Language": "en-US,en;q=0.9"
+};
 
-const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
-const HEADERS = { "User-Agent": UA, "Accept-Language": "en-US,en;q=0.9" };
-
-function request(url, options) {
-  options = options || {};
+function get(url, redirect) {
   return new Promise(function(resolve) {
-    const req = {
+    $httpClient.get({
       url: url,
-      method: options.method || "GET",
-      headers: options.headers || HEADERS,
-      timeout: options.timeout || 12,
-      "auto-redirect": options.autoRedirect !== false
-    };
-    if (options.body) req.body = options.body;
-    const method = (options.method || "GET").toLowerCase();
-    const client = method === "post" ? $httpClient.post : $httpClient.get;
-    client(req, function(error, response, body) {
+      headers: H,
+      timeout: 12,
+      "auto-redirect": redirect !== false
+    }, function(err, res, body) {
       resolve({
-        error: error ? String(error) : null,
-        status: response ? Number(response.status) : 0,
-        headers: response && response.headers ? response.headers : {},
+        error: !!err,
+        status: res ? Number(res.status) : 0,
+        headers: res && res.headers ? res.headers : {},
         body: typeof body === "string" ? body : ""
       });
     });
   });
 }
 
-function header(headers, name) {
-  if (!headers) return "";
-  const wanted = name.toLowerCase();
-  const keys = Object.keys(headers);
+function head(headers, key) {
+  const target = key.toLowerCase();
+  const keys = Object.keys(headers || {});
   for (let i = 0; i < keys.length; i++) {
-    if (keys[i].toLowerCase() === wanted) return String(headers[keys[i]]);
+    if (keys[i].toLowerCase() === target) return String(headers[keys[i]]);
   }
   return "";
 }
 
+function traceCode(body) {
+  const m = String(body || "").match(/(?:^|\n)loc=([A-Z]{2})(?:\n|$)/);
+  return m ? m[1] : "";
+}
+
 function flag(code) {
-  if (!code || !/^[A-Z]{2}$/.test(code)) return "";
-  return String.fromCodePoint(127397 + code.charCodeAt(0), 127397 + code.charCodeAt(1));
+  return /^[A-Z]{2}$/.test(code || "")
+    ? String.fromCodePoint(127397 + code.charCodeAt(0), 127397 + code.charCodeAt(1)) + " " + code
+    : "未知";
 }
 
-function labelRegion(code) {
-  return code ? flag(code) + code : "地区未知";
+function item(name, status, region) {
+  return { name: name, status: status, region: region || "未知" };
 }
 
-function parseTrace(body, key) {
-  const re = new RegExp("(?:^|\\n)" + key + "=([A-Z]{2})(?:\\n|$)", "i");
-  const match = String(body || "").match(re);
-  return match ? match[1].toUpperCase() : "";
+async function claude() {
+  const r = await get("https://claude.ai/cdn-cgi/trace");
+  if (r.error || r.status < 200 || r.status >= 400) return item("Claude", "未确认");
+  const c = traceCode(r.body);
+  if (!c) return item("Claude", "未确认");
+  return item("Claude", ["AF","BY","CN","CU","HK","IR","KP","MO","RU","SY"].indexOf(c) >= 0 ? "受限" : "可用", flag(c));
 }
 
-function result(name, text, detail) {
-  return { name: name, text: text, detail: detail || "" };
+async function gemini() {
+  const r = await get("https://gemini.google.com/");
+  if (r.error || r.status < 200 || r.status >= 400) return item("Gemini", "不可访问");
+  const m = r.body.match(/"(?:countryCode|country_code|GL)"\s*:\s*"([A-Z]{2,3})"/);
+  if (!m) return item("Gemini", "未确认");
+  const c = m[1].toUpperCase();
+  return item("Gemini", ["CN","CHN","RU","RUS","IR","IRN","KP","PRK","SY","SYR","BY","BLR","CU","CUB","HK","HKG","MO","MAC"].indexOf(c) >= 0 ? "受限" : "可用", c);
 }
 
-async function checkClaude() {
-  const r = await request("https://claude.ai/cdn-cgi/trace");
-  if (r.error || r.status < 200 || r.status >= 400) return result("Claude", "检测失败", "trace 请求异常");
-  const code = parseTrace(r.body, "loc");
-  if (!code) return result("Claude", "地区未知", "未取得 Cloudflare loc");
-  const blocked = ["AF","BY","CN","CU","HK","IR","KP","MO","RU","SY"];
-  return result("Claude", blocked.indexOf(code) >= 0 ? "地区不支持" : "地区检测通过", labelRegion(code));
-}
-
-async function checkGemini() {
-  const r = await request("https://gemini.google.com/");
-  if (r.error || r.status < 200 || r.status >= 400) return result("Gemini", "检测失败", "HTTP " + r.status);
-  const body = r.body || "";
-  let code = "";
-  const marker = body.indexOf(',2,1,200,"');
-  if (marker >= 0) {
-    const candidate = body.slice(marker + 10, marker + 13);
-    if (/^[A-Z]{3}$/.test(candidate)) code = candidate;
-  }
-  if (!code) {
-    const m = body.match(/"(?:countryCode|country_code|GL)"\s*:\s*"([A-Z]{2,3})"/);
-    if (m) code = m[1].toUpperCase();
-  }
-  if (!code) return result("Gemini", "无法判定", "页面可访问，但未提取到地区标记");
-  const blocked = ["CHN","RUS","BLR","CUB","IRN","PRK","SYR","HKG","MAC"];
-  return result("Gemini", blocked.indexOf(code) >= 0 ? "地区不支持" : "地区检测通过", "Google 地区码 " + code);
-}
-
-async function checkOpenAI() {
-  const checks = await Promise.all([
-    request("https://chat.openai.com/cdn-cgi/trace"),
-    request("https://api.openai.com/compliance/cookie_requirements"),
-    request("https://ios.chat.openai.com/")
+async function openai() {
+  const rs = await Promise.all([
+    get("https://chatgpt.com/cdn-cgi/trace"),
+    get("https://api.openai.com/compliance/cookie_requirements"),
+    get("https://ios.chat.openai.com/")
   ]);
-  const trace = checks[0], web = checks[1], ios = checks[2];
-  const code = parseTrace(trace.body, "loc");
-  let webText = "无法判定";
-  const webBody = (web.body || "").toLowerCase();
-  if (web.error) webText = "连接失败";
-  else if (webBody.indexOf("unsupported_country") >= 0 || webBody.indexOf("unsupported country") >= 0) webText = "地区不支持";
-  else if (web.status >= 200 && web.status < 400 && web.body.length > 0) webText = "接口检测通过";
-  else if (web.status >= 400) webText = "接口异常 HTTP " + web.status;
-
-  let iosText = "无法判定";
-  const iosBody = (ios.body || "").toLowerCase();
-  if (ios.error) iosText = "连接失败";
-  else if (iosBody.indexOf("disallowed isp") >= 0) iosText = "ISP 不支持";
-  else if (iosBody.indexOf("request is not allowed. please try again later.") >= 0) iosText = "接口检测通过";
-  else if (iosBody.indexOf("you have been blocked") >= 0) iosText = "出口 IP 被封锁";
-  else if (ios.status >= 400) iosText = "接口异常 HTTP " + ios.status;
-
-  return result("OpenAI", "Web " + webText + " / iOS " + iosText, labelRegion(code));
+  const code = traceCode(rs[0].body);
+  const webBody = rs[1].body.toLowerCase();
+  const iosBody = rs[2].body.toLowerCase();
+  const webOK = !rs[1].error && rs[1].status >= 200 && rs[1].status < 400 &&
+    rs[1].body.length > 0 && webBody.indexOf("unsupported_country") < 0;
+  const iosBlocked = /disallowed isp|you have been blocked/.test(iosBody);
+  const iosOK = !rs[2].error && !iosBlocked &&
+    /request is not allowed\. please try again later\./.test(iosBody);
+  let status = "未确认";
+  if (webOK && iosOK) status = "可用";
+  else if (webOK || iosOK) status = "部分可用";
+  else if (iosBlocked || /unsupported_country|unsupported country/.test(webBody)) status = "受限";
+  return item("OpenAI", status, flag(code));
 }
 
-async function checkYouTube() {
-  const r = await request("https://www.youtube.com/premium?hl=en");
-  if (r.error || r.status < 200 || r.status >= 400) return result("YouTube Premium", "检测失败", "HTTP " + r.status);
-  const body = r.body || "";
-  const lower = body.toLowerCase();
-  const blocked = lower.indexOf("youtube premium is not available in your country") >= 0 ||
-    lower.indexOf("premium is not available in your country") >= 0 ||
-    lower.indexOf("premium is not available in your region") >= 0;
-  let code = "";
-  const patterns = [
-    /id=["']country-code["'][^>]*>\s*([A-Za-z]{2})\s*</,
-    /"GL"\s*:\s*"([A-Z]{2})"/,
-    /"countryCode"\s*:\s*"([A-Z]{2})"/,
-    /"country_code"\s*:\s*"([A-Z]{2})"/
-  ];
-  for (let i = 0; i < patterns.length && !code; i++) {
-    const m = body.match(patterns[i]);
-    if (m) code = m[1].toUpperCase();
-  }
-  if (blocked) return result("YouTube Premium", "该地区不可用", labelRegion(code));
-  if (lower.indexOf("youtube premium") >= 0 || lower.indexOf("ad-free") >= 0 || lower.indexOf('"browseid":"spunlimited"') >= 0) {
-    return result("YouTube Premium", "页面特征检测通过", labelRegion(code));
-  }
-  return result("YouTube Premium", "无法判定", "未匹配到 Premium 页面特征");
+async function youtube() {
+  const r = await get("https://www.youtube.com/premium?hl=en");
+  if (r.error || r.status < 200 || r.status >= 400) return item("YouTube", "不可访问");
+  const b = r.body.toLowerCase();
+  const m = r.body.match(/"(?:GL|countryCode|country_code)"\s*:\s*"([A-Z]{2})"/);
+  const c = m ? m[1] : "";
+  if (/premium is not available in your (country|region)/.test(b)) return item("YouTube", "受限", flag(c));
+  if (b.indexOf("youtube premium") >= 0 || b.indexOf("ad-free") >= 0) return item("YouTube", "可访问", flag(c));
+  return item("YouTube", "未确认", flag(c));
 }
 
-async function checkNetflix() {
-  // 两个非 Netflix 原创片名用于观察地区版权差异；另用原创片名作站点连通性对照。
-  const tests = [
-    { id: "70143836", kind: "licensed" }, // Breaking Bad
-    { id: "70136120", kind: "licensed" }, // The Office
-    { id: "80057281", kind: "original" }  // Stranger Things
-  ];
-  const checks = await Promise.all(tests.map(function(item) {
-    return request("https://www.netflix.com/title/" + item.id, { autoRedirect: false });
+async function netflix() {
+  const ids = ["70143836", "70136120", "80057281"];
+  const rs = await Promise.all(ids.map(function(id) {
+    return get("https://www.netflix.com/title/" + id, false);
   }));
-
-  if (checks.some(function(r) { return r.error || !r.status; })) {
-    return result("Netflix", "未确认", "标题页请求异常");
-  }
-
-  let code = "";
-  const available = [];
-  const unavailable = [];
-  const restricted = [];
-
-  checks.forEach(function(r, index) {
-    const location = header(r.headers, "location");
-    const locale = location.match(/\\/([a-z]{2})-[a-z]{2}\\//i);
-    if (!code && locale) code = locale[1].toUpperCase();
-
-    const body = (r.body || "").toLowerCase();
-    const explicitlyUnavailable = /title is not available|not available to watch|isn't available in your country|not available in your region/.test(body);
-
-    if (r.status === 403 || r.status === 451) {
-      restricted.push(tests[index].kind);
-    } else if (r.status === 404 || explicitlyUnavailable) {
-      unavailable.push(tests[index].kind);
-    } else if ((r.status === 200 || r.status === 301 || r.status === 302) && !explicitlyUnavailable) {
-      available.push(tests[index].kind);
-    }
-  });
-
-  const region = code ? labelRegion(code) : "地区未知";
-  const licensedAvailable = available.indexOf("licensed") >= 0;
-  const originalAvailable = available.indexOf("original") >= 0;
-
-  if (restricted.length > 0 && !licensedAvailable && !originalAvailable) {
-    return result("Netflix", "请求受限", region + "；HTTP 403/451");
-  }
-  if (licensedAvailable) {
-    return result("Netflix", "非自制片名可访问", region + "；仅代表测试片名");
-  }
-  if (originalAvailable) {
-    return result("Netflix", "原创片名可访问", region + "；非自制片名未通过测试");
-  }
-  if (unavailable.length > 0) {
-    return result("Netflix", "测试片名未命中", region + "；不能据此断定仅有原创片");
-  }
-  return result("Netflix", "未确认", region + "；未取得有效片库信号");
-}
-async function checkSpotify() {
-  const r = await request("https://www.spotify.com/api/content/v1/country-selector?platform=web&format=json", { autoRedirect: false });
-  if (r.error || !r.status) return result("Spotify", "检测失败", "地区接口连接异常");
-  const location = header(r.headers, "location");
-  let code = "";
-  const m = location.match(/\/([a-z]{2})(?:-[a-z]{2})?\//i);
-  if (m) code = m[1].toUpperCase();
-  if (!code) {
-    const b = r.body.match(/"countryCode"\s*:\s*"([A-Z]{2})"/i);
-    if (b) code = b[1].toUpperCase();
-  }
-  if (r.status >= 200 && r.status < 400 && code) return result("Spotify", "地区接口检测通过", labelRegion(code));
-  if (r.status === 403 || r.status === 451) return result("Spotify", "可能不可用", "HTTP " + r.status);
-  return result("Spotify", "无法判定", "未提取到地区码，HTTP " + r.status);
+  if (rs.some(function(r) { return r.error || !r.status; })) return item("Netflix", "未确认");
+  if (rs.some(function(r) { return r.status === 403 || r.status === 451; })) return item("Netflix", "请求受限");
+  // A successful title-page HTTP response does not prove regional playback rights.
+  if (rs.some(function(r) { return r.status >= 200 && r.status < 400; })) return item("Netflix", "页面可访问");
+  return item("Netflix", "未确认");
 }
 
-async function checkTikTok() {
-  const r = await request("https://www.tiktok.com/cdn-cgi/trace");
-  if (r.error || r.status < 200 || r.status >= 400) return result("TikTok", "检测失败", "trace 请求异常");
-  const body = r.body || "";
-  const match = body.match(/"region"\s*:\s*"([A-Za-z-]+)"/);
-  let code = "";
-  if (match) {
-    const parts = match[1].toUpperCase().split("-");
-    code = parts.length > 1 ? parts[parts.length - 1] : parts[0];
-  }
-  if (/^[A-Z]{2}$/.test(code)) return result("TikTok", "地区信号检测通过", labelRegion(code));
-  if (/access denied|not available in your region|tiktok is not available/i.test(body)) {
-    return result("TikTok", "可能受地区限制", "页面返回限制特征");
-  }
-  return result("TikTok", "无法判定", "未提取到 region 字段");
+async function disney() {
+  const r = await get("https://www.disneyplus.com/");
+  if (r.error || r.status < 200 || r.status >= 400) return item("Disney+", "不可访问");
+  if (/unavailable in your region|not available in your country/i.test(r.body)) return item("Disney+", "受限");
+  return item("Disney+", "入口可访问");
 }
 
-async function checkDisney() {
-  const r = await request("https://www.disneyplus.com/");
-  if (r.error || r.status < 200 || r.status >= 400) return result("Disney+", "检测失败", "HTTP " + r.status);
-  const body = r.body || "";
-  const match = body.match(/"region"\s*:\s*"([A-Z]{2})"/i) || body.match(/"countryCode"\s*:\s*"([A-Z]{2})"/i);
-  const code = match ? match[1].toUpperCase() : "";
-  if (/preview|unavailable in your region|not available in your country/i.test(body)) {
-    return result("Disney+", "页面提示地区不可用", labelRegion(code));
-  }
-  return result("Disney+", "入口可访问", (code ? labelRegion(code) : "地区未知") + "；未验证账号及实际播放权限");
+async function spotify() {
+  const r = await get("https://www.spotify.com/api/content/v1/country-selector?platform=web&format=json", false);
+  if (r.error || !r.status) return item("Spotify", "未确认");
+  const loc = head(r.headers, "location");
+  const m = (loc + " " + r.body).match(/(?:\/|countryCode["': ]+)([a-z]{2})(?:-[a-z]{2})?/i);
+  const c = m ? m[1].toUpperCase() : "";
+  if (r.status === 403 || r.status === 451) return item("Spotify", "受限", flag(c));
+  return item("Spotify", r.status >= 200 && r.status < 400 && c ? "可用" : "未确认", flag(c));
 }
 
-function compactStatus(item) {
-  const text = item.text || "";
-  if (item.name === "OpenAI") {
-    const webOK = /Web 接口检测通过/.test(text);
-    const iosOK = /iOS 接口检测通过/.test(text);
-    const restricted = /地区不支持|ISP 不支持|出口 IP 被封锁|HTTP 403|HTTP 451/.test(text);
-    if (webOK && iosOK) return "可用";
-    if (webOK || iosOK) return "部分可用";
-    if (restricted) return "受限";
-    return "未确认";
-  }
-  if (/地区不支持|该地区不可用|页面提示地区不可用|可能被地区限制|可能受地区限制|可能不可用|请求受限/.test(text)) return "受限";
-  if (item.name === "Netflix") {
-    if (/非自制片名可访问/.test(text)) return "版权片可用";
-    if (/原创片名可访问/.test(text)) return "原创可用";
-    return "未确认";
-  }
-  if (/地区检测通过|页面特征检测通过|地区接口检测通过|地区信号检测通过/.test(text)) return "可用";
-  return "未确认";
-}
-
-function compactRegion(item) {
-  const detail = item.detail || "";
-  const match = detail.match(/([A-Z]{2})(?:；.*)?$/) || detail.match(/地区码 ([A-Z]{3})$/);
-  if (!match) return "未知";
-  const code = match[1].toUpperCase();
-  return code.length === 2 ? flag(code) + code : code;
+async function tiktok() {
+  const r = await get("https://www.tiktok.com/");
+  if (r.error || r.status < 200 || r.status >= 400) return item("TikTok", "不可访问");
+  if (/access denied|not available in your region|tiktok is not available/i.test(r.body)) return item("TikTok", "受限");
+  return item("TikTok", "入口可访问");
 }
 
 async function main() {
-  const values = await Promise.all([
-    checkClaude(),
-    checkGemini(),
-    checkOpenAI(),
-    checkYouTube(),
-    checkNetflix(),
-    checkDisney(),
-    checkSpotify(),
-    checkTikTok()
+  const results = await Promise.all([
+    claude(), gemini(), openai(), youtube(), netflix(), disney(), spotify(), tiktok()
   ]);
-
-  const rows = values.map(function(item) {
-    const name = item.name === "YouTube Premium" ? "YouTube" : item.name;
-    return name.padEnd(12, " ") + "| " + compactStatus(item).padEnd(10, " ") + "| " + compactRegion(item);
+  const lines = results.map(function(x) {
+    return x.name + "  |  " + x.status + "  |  " + x.region;
   });
-
-  const uncertain = values.filter(function(item) {
-    return compactStatus(item) === "未确认" || compactStatus(item) === "部分可用";
-  }).length;
-  const now = new Date();
-  const time = ("0" + now.getHours()).slice(-2) + ":" + ("0" + now.getMinutes()).slice(-2);
-
+  const d = new Date();
+  const time = ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2);
+  const uncertain = results.some(function(x) {
+    return x.status === "未确认" || x.status === "部分可用";
+  });
   $done({
-    title: "AI / 海外媒体解锁检测",
-    content: "服务        状态      地区\n" +
-      "------------------------------\n" +
-      rows.join("\n") +
+    title: "AI / 海外媒体检测",
+    content: "服务  |  状态  |  地区\n" + lines.join("\n") +
       "\n\n检测时间：" + time +
-      "\n注：仅代表公开接口/页面检测信号，不代表账号资格或实际播放权限。",
-    icon: uncertain > 0 ? "exclamationmark.triangle" : "checkmark.circle",
-    "icon-color": uncertain > 0 ? "#FF9500" : "#34C759"
+      "\n说明：页面可访问不代表账号可用或内容可播放。",
+    icon: uncertain ? "exclamationmark.triangle" : "checkmark.circle",
+    "icon-color": uncertain ? "#FF9500" : "#34C759"
   });
 }
 
-main().catch(function(error) {
+main().catch(function(e) {
   $done({
-    title: "AI / 海外媒体解锁检测",
-    content: "检测脚本异常：" + String(error),
+    title: "AI / 海外媒体检测",
+    content: "检测异常：" + String(e),
     icon: "exclamationmark.triangle",
     "icon-color": "#FF3B30"
   });
