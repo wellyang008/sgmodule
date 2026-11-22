@@ -21,7 +21,7 @@ function get(url, redirect) {
 }
 
 function traceCode(body) {
-  const m = String(body || "").match(/(?:^|\\n)loc=([A-Z]{2})(?:\\n|$)/);
+  const m = String(body || "").match(/(?:^|\n)loc=([A-Z]{2})(?:\n|$)/);
   return m ? m[1] : "";
 }
 
@@ -49,7 +49,7 @@ async function claude() {
 async function gemini() {
   const r = await get("https://gemini.google.com/");
   if (r.error || r.status < 200 || r.status >= 400) return item("Gemini", "不可访问");
-  const m = r.body.match(/"(?:countryCode|country_code|GL)"\\s*:\\s*"([A-Z]{2,3})"/);
+  const m = r.body.match(/"(?:countryCode|country_code|GL)"\s*:\s*"([A-Z]{2,3})"/);
   if (!m) return item("Gemini", "未确认");
   const c = m[1].toUpperCase();
   const blocked = ["CN","CHN","RU","RUS","IR","IRN","KP","PRK","SY","SYR","BY","BLR","CU","CUB","HK","HKG","MO","MAC"].indexOf(c) >= 0;
@@ -69,7 +69,7 @@ async function openai() {
     rs[1].body.length > 0 && webBody.indexOf("unsupported_country") < 0;
   const iosBlocked = /disallowed isp|you have been blocked/.test(iosBody);
   const iosOK = !rs[2].error && !iosBlocked &&
-    /request is not allowed\\. please try again later\\./.test(iosBody);
+    /request is not allowed\. please try again later\./.test(iosBody);
   let status = "未确认";
   if (webOK && iosOK) status = "可用";
   else if (webOK || iosOK) status = "部分可用";
@@ -81,7 +81,7 @@ async function youtube() {
   const r = await get("https://www.youtube.com/premium?hl=en");
   if (r.error || r.status < 200 || r.status >= 400) return item("YouTube", "不可访问");
   const b = r.body.toLowerCase();
-  const m = r.body.match(/"(?:GL|countryCode|country_code)"\\s*:\\s*"([A-Z]{2})"/);
+  const m = r.body.match(/"(?:GL|countryCode|country_code)"\s*:\s*"([A-Z]{2})"/);
   const c = m ? m[1] : "";
   if (/premium is not available in your (country|region)/.test(b)) return item("YouTube", "受限", flag(c));
   return item("YouTube", "未确认", flag(c));
@@ -133,9 +133,9 @@ async function main() {
   });
   $done({
     title: "AI / 海外媒体检测",
-    content: "服务      状态    地区\\n" + lines.join("\\n") +
-      "\\n\\n检测时间：" + time +
-      "\\n说明：可用表示检测到明确可用信号；未确认表示现有检测无法验证账号或播放权限。",
+    content: "服务      状态    地区\n" + lines.join("\n") +
+      "\n\n检测时间：" + time +
+      "\n说明：可用表示检测到明确可用信号；未确认表示现有检测无法验证账号或播放权限。",
     icon: uncertain ? "exclamationmark.triangle" : "checkmark.circle",
     "icon-color": uncertain ? "#FF9500" : "#34C759"
   });
