@@ -98,13 +98,35 @@ async function openai() {
 }
 
 async function youtube() {
-  const r = await get("https://www.youtube.com/premium?hl=en");
-  if (r.error || r.status < 200 || r.status >= 400) return item("YouTube", "不可访问");
-  const b = r.body.toLowerCase();
-  const m = r.body.match(/"(?:GL|countryCode|country_code)"\s*:\s*"([A-Z]{2})"/);
-  const c = m ? m[1] : "";
-  if (/premium is not available in your (country|region)/.test(b)) return item("YouTube", "受限", flag(c));
-  return item("YouTube", "未确认", flag(c));
+  const home = await get("https://www.youtube.com/", false);
+  if (home.error || home.status < 200 || home.status >= 400)
+    return item("YouTube", home.status === 403 || home.status === 451 ? "受限" : "不可访问");
+  const key = home.body.match(/"INNERTUBE_API_KEY"\s*:\s*"([^"]+)"/);
+  const ver = home.body.match(/"INNERTUBE_CLIENT_VERSION"\s*:\s*"([^"]+)"/);
+  const regionMatch = home.body.match(/"GL"\s*:\s*"([A-Z]{2})"/);
+  const region = regionMatch ? regionMatch[1] : traceCode(home.body);
+  if (!key) return item("YouTube", "未确认", flag(region));
+  const player = await post(
+    "https://www.youtube.com/youtubei/v1/player?key=" + key[1],
+    {
+      videoId: "M7lc1UVf-VE",
+      context: { client: {
+        clientName: "WEB",
+        clientVersion: ver ? ver[1] : "2.20261120.01.00",
+        hl: "en", gl: region || "US"
+      }}
+    },
+    { "X-YouTube-Client-Name": "1", "X-YouTube-Client-Version": ver ? ver[1] : "2.20261120.01.00" }
+  );
+  if (player.error || !player.status) return item("YouTube", "不可访问", flag(region));
+  let data;
+  try { data = JSON.parse(player.body); } catch (e) { return item("YouTube", "未确认", flag(region)); }
+  const state = data && data.playabilityStatus && data.playabilityStatus.status;
+  const reason = data && data.playabilityStatus && data.playabilityStatus.reason || "";
+  if (state === "OK") return item("YouTube", "可用", flag(region));
+  if (state === "UNPLAYABLE" || state === "LOGIN_REQUIRED" || /not available in your country|geo.?restrict/i.test(reason))
+    return item("YouTube", "受限", flag(region));
+  return item("YouTube", "未确认", flag(region));
 }
 
 async function netflix() {
