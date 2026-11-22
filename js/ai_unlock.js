@@ -91,7 +91,7 @@ async function youtube() {
   const m = r.body.match(/"(?:GL|countryCode|country_code)"\s*:\s*"([A-Z]{2})"/);
   const c = m ? m[1] : "";
   if (/premium is not available in your (country|region)/.test(b)) return item("YouTube", "受限", flag(c));
-  if (b.indexOf("youtube premium") >= 0 || b.indexOf("ad-free") >= 0) return item("YouTube", "可访问", flag(c));
+  if (b.indexOf("youtube premium") >= 0 || b.indexOf("ad-free") >= 0) return item("YouTube", "未确认", flag(c));
   return item("YouTube", "未确认", flag(c));
 }
 
@@ -103,7 +103,7 @@ async function netflix() {
   if (rs.some(function(r) { return r.error || !r.status; })) return item("Netflix", "未确认");
   if (rs.some(function(r) { return r.status === 403 || r.status === 451; })) return item("Netflix", "请求受限");
   // A successful title-page HTTP response does not prove regional playback rights.
-  if (rs.some(function(r) { return r.status >= 200 && r.status < 400; })) return item("Netflix", "页面可访问");
+  if (rs.some(function(r) { return r.status >= 200 && r.status < 400; })) return item("Netflix", "未确认");
   return item("Netflix", "未确认");
 }
 
@@ -111,7 +111,7 @@ async function disney() {
   const r = await get("https://www.disneyplus.com/");
   if (r.error || r.status < 200 || r.status >= 400) return item("Disney+", "不可访问");
   if (/unavailable in your region|not available in your country/i.test(r.body)) return item("Disney+", "受限");
-  return item("Disney+", "入口可访问");
+  return item("Disney+", "未确认");
 }
 
 async function spotify() {
@@ -128,15 +128,23 @@ async function tiktok() {
   const r = await get("https://www.tiktok.com/");
   if (r.error || r.status < 200 || r.status >= 400) return item("TikTok", "不可访问");
   if (/access denied|not available in your region|tiktok is not available/i.test(r.body)) return item("TikTok", "受限");
-  return item("TikTok", "入口可访问");
+  return item("TikTok", "未确认");
 }
 
 async function main() {
   const results = await Promise.all([
     claude(), gemini(), openai(), youtube(), netflix(), disney(), spotify(), tiktok()
   ]);
+  function pad(value, width) {
+    const str = String(value);
+    let displayWidth = 0;
+    for (let i = 0; i < str.length; i++) {
+      displayWidth += str.charCodeAt(i) > 255 ? 2 : 1;
+    }
+    return str + " ".repeat(Math.max(0, width - displayWidth));
+  }
   const lines = results.map(function(x) {
-    return x.name + "  |  " + x.status + "  |  " + x.region;
+    return pad(x.name, 10) + pad(x.status, 11) + x.region;
   });
   const d = new Date();
   const time = ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2);
@@ -145,9 +153,9 @@ async function main() {
   });
   $done({
     title: "AI / 海外媒体检测",
-    content: "服务  |  状态  |  地区\n" + lines.join("\n") +
+    content: "服务       状态      地区\n" + lines.join("\n") +
       "\n\n检测时间：" + time +
-      "\n说明：页面可访问不代表账号可用或内容可播放。",
+      "\n说明：未确认表示请求成功但缺少可用性证据，不代表已解锁。",
     icon: uncertain ? "exclamationmark.triangle" : "checkmark.circle",
     "icon-color": uncertain ? "#FF9500" : "#34C759"
   });
