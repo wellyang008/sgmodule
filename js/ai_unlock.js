@@ -123,12 +123,10 @@ async function main() {
   const results = await Promise.all([
     claude(), gemini(), openai(), youtube(), netflix(), disney(), spotify(), tiktok()
   ]);
-  // Use one field per line: Surge's panel font may be proportional,
-  // so padding spaces cannot guarantee aligned columns.
+  // Keep the requested three-column layout. Tabs separate left-aligned fields
+  // without drawing vertical-bar separators or padding by character count.
   const lines = results.map(function(x) {
-    return x.name +
-      "\\n状态：  " + x.status +
-      "\\n地区：  " + x.region;
+    return x.name + "\\t" + x.status + "\\t" + x.region;
   });
   const d = new Date();
   const time = ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2);
@@ -137,9 +135,9 @@ async function main() {
   });
   $done({
     title: "AI / 海外媒体检测",
-    content: lines.join("\\n\\n") +
+    content: "服务\\t状态\\t地区\\n" + lines.join("\\n") +
       "\\n\\n检测时间：" + time +
-      "\\n说明：未确认表示检测信号不足，不代表服务不可用；地区为各服务响应中识别到的地区。",
+      "\\n说明：未确认表示检测信号不足，不代表服务不可用；地区为服务响应中识别到的地区。",
     icon: uncertain ? "exclamationmark.triangle" : "checkmark.circle",
     "icon-color": uncertain ? "#FF9500" : "#34C759"
   });
