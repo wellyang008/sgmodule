@@ -249,7 +249,7 @@ async function main() {
   const serviceWidth = 8, statusWidth = 10;
   const header = padCell("服务", serviceWidth) + "　" + padCell("状态", statusWidth) + "　地区";
   const lines = checks.map(function(x) {
-    const flag = (x.region.match(/[\\u{1F1E6}-\\u{1F1FF}]{2}/u) || [""])[0];
+    const flag = x.region.split(" ")[0];
     return padCell(x.name, serviceWidth) + "　" + padCell(x.status, statusWidth) + "　" + (flag || "未知");
   });
   const d = new Date();
