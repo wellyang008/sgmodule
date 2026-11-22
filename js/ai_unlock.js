@@ -76,7 +76,7 @@ function extractObjectAfter(source, marker) {
     const ch = source[i];
     if (quoted) {
       if (escaped) escaped = false;
-      else if (ch === "\\\\") escaped = true;
+      else if (ch === "\\") escaped = true;
       else if (ch === '"') quoted = false;
       continue;
     }
@@ -172,7 +172,7 @@ async function netflix() {
     const cm = origin.match(/(?:^|[\/?&])([A-Z]{2})(?:[\/?&]|$)/) ||
       r.body.match(/"countryCode"\s*:\s*"([A-Z]{2})"/i);
     if (!country && cm) country = cm[1].toUpperCase();
-    if (reachable(r) && new RegExp('"titleId"\\s*:\\s*"' + ids[i] + '"').test(r.body)) titleSignals++;
+    if (reachable(r) && new RegExp('"titleId"\\s*:\\s*"?'+ ids[i] + '"?').test(r.body)) titleSignals++;
   });
   // Netflix's public title page is not proof of full catalog or playback entitlement.
   if (titleSignals === 2) return item("Netflix", "标题可见", flag(country));
