@@ -140,24 +140,62 @@ async function openai() {
   return result("OpenAI", "已解锁", region);
 }
 
-// YouTube: inspect the player response for a real test video, not the homepage.
+// YouTube: call the official Innertube player endpoint for a fixed public video.
+// A watch-page HTML response alone is not treated as playback evidence.
 async function youtube() {
+  const videoId = "jNQXAC9IVRw";
   const pair = await Promise.all([
-    get("https://www.youtube.com/watch?v=jNQXAC9IVRw&hl=en", false),
+    get("https://www.youtube.com/watch?v=" + videoId + "&hl=en", false),
     regionFor("www.youtube.com")
   ]);
-  const r = pair[0], country = pair[1], region = countryFlag(country);
-  if (isBlocked(r) || /sorry\/index|video unavailable in your country|not available in your country/i.test(r.body)) {
+  const page = pair[0], region = countryFlag(pair[1]);
+  if (isBlocked(page) || /video unavailable in your country|not available in your country/i.test(page.body)) {
     return result("YouTube", "地区受限", region);
   }
-  if (r.error || !r.status) return result("YouTube", "不可访问", region);
-  const p = extractObject(r.body, "ytInitialPlayerResponse");
-  const ps = p && p.playabilityStatus;
-  if (ps && ps.status === "OK" && p.videoDetails &&
-      p.videoDetails.videoId === "jNQXAC9IVRw") {
+  if (page.error || !page.status) return result("YouTube", "不可访问", region);
+  if (!isReachable(page)) return result("YouTube", "未确认", region);
+
+  const keyMatch = page.body.match(/"INNERTUBE_API_KEY"\\s*:\\s*"([^"]+)"/);
+  const versionMatch = page.body.match(/"INNERTUBE_CLIENT_VERSION"\\s*:\\s*"([^"]+)"/);
+  if (!keyMatch) return result("YouTube", "未确认", region);
+  const clientVersion = versionMatch ? versionMatch[1] : "2.20261120.01.00";
+  const api = "https://www.youtube.com/youtubei/v1/player?key=" + encodeURIComponent(keyMatch[1]);
+  const payload = {
+    videoId: videoId,
+    contentCheckOk: true,
+    racyCheckOk: true,
+    context: {
+      client: {
+        clientName: "WEB",
+        clientVersion: clientVersion,
+        hl: "en",
+        gl: pair[1] || "US"
+      }
+    }
+  };
+  const player = await post(api, payload, {
+    "Origin": "https://www.youtube.com",
+    "Referer": "https://www.youtube.com/watch?v=" + videoId
+  });
+  if (isBlocked(player)) return result("YouTube", "地区受限", region);
+  if (player.error || !player.status) return result("YouTube", "不可访问", region);
+  const data = json(player.body);
+  const ps = data && data.playabilityStatus;
+  if (!ps) return result("YouTube", "未确认", region);
+  if (ps.status === "OK" && data.videoDetails && data.videoDetails.videoId === videoId &&
+      data.streamingData &&
+      ((data.streamingData.formats && data.streamingData.formats.length > 0) ||
+       (data.streamingData.adaptiveFormats && data.streamingData.adaptiveFormats.length > 0) ||
+       data.streamingData.hlsManifestUrl || data.streamingData.dashManifestUrl)) {
     return result("YouTube", "已解锁", region);
   }
-  if (ps && /AGE|LOGIN|PRIVATE|UNAVAILABLE|GEO|COUNTRY|REGION/i.test(String(ps.status) + " " + String(ps.reason || ""))) {
+  const status = String(ps.status || "");
+  const reason = String(ps.reason || "");
+  if (/GEO|COUNTRY|REGION/i.test(status + " " + reason) ||
+      /not available in your country|blocked in your country/i.test(reason)) {
+    return result("YouTube", "地区受限", region);
+  }
+  if (/LOGIN_REQUIRED|AGE_CHECK_REQUIRED|UNPLAYABLE/i.test(status)) {
     return result("YouTube", "播放受限", region);
   }
   return result("YouTube", "未确认", region);
