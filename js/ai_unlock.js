@@ -142,7 +142,6 @@ async function youtube() {
   // Parse the player response; page text or a Premium marketing keyword is not a playback signal.
   const p = extractObjectAfter(r.body, "ytInitialPlayerResponse");
   const ps = p && p.playabilityStatus;
-  const ps = p && p.playabilityStatus;
   if (ps && ps.status === "OK") return item("YouTube", "可播放", region);
   if (ps && /GEO|COUNTRY|REGION/i.test(String(ps.reason || "") + " " + String(ps.status || ""))) return item("YouTube", "受限", region);
   if (ps && ps.status) return item("YouTube", "未确认", region);
