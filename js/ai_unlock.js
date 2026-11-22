@@ -175,38 +175,26 @@ async function netflix() {
   return item("Netflix", "目录接口支持", flag(code));
 }
 async function disney() {
+  // Device registration response exposes Disney+'s supported-location decision.
   const auth = "ZGlzbmV5JmJyb3dzZXImMS4wLjA.Cu56AgSfBTDag5NiRA81oLHkDZfu5L3CKadnefEAY84";
   const r = await post("https://disney.api.edge.bamgrid.com/graph/v1/device/graphql", {
     query: "mutation registerDevice($input: RegisterDeviceInput!) { registerDevice(registerDevice: $input) { grant { grantType assertion } } }",
     variables: { input: {
       applicationRuntime: "chrome",
-      attributes: { browserName: "chrome", browserVersion: "124.0", manufacturer: "apple", model: null, operatingSystem: "macintosh", operatingSystemVersion: "10.15.7", osDeviceIds: [] },
-      deviceFamily: "browser", deviceLanguage: "en", deviceProfile: "macosx"
+      attributes: { browserName: "chrome", browserVersion: "94.0.4606", manufacturer: "microsoft", model: null, operatingSystem: "windows", operatingSystemVersion: "10.0", osDeviceIds: [] },
+      deviceFamily: "browser", deviceLanguage: "en", deviceProfile: "windows"
     }}
   }, { Authorization: auth });
-  if (blocked(r)) return item("Disney+", "受限");
   if (r.error || !r.status) return item("Disney+", "不可访问");
-  if (r.status < 200 || r.status >= 300) return item("Disney+", "未确认");
+  if (r.status !== 200) return item("Disney+", r.status === 403 || r.status === 451 ? "受限" : "未确认");
   const data = parseJSON(r.body);
-  const sdk = data && data.extensions && data.extensions.sdk;
-  const session = sdk && sdk.session;
-  const region = session && session.location && session.location.countryCode || "";
-  if (session && session.inSupportedLocation === false) return item("Disney+", "受限", flag(region));
-  const token = sdk && sdk.token && sdk.token.accessToken;
-  if (!token || !region || !session || session.inSupportedLocation !== true) return item("Disney+", "未确认", flag(region));
-  const q = await post("https://disney.api.edge.bamgrid.com/v1/public/graphql", {
-    query: "query($preferredLanguages: [String!]!, $version: String) {globalization(version: $version) { uiLanguage(preferredLanguages: $preferredLanguages) }}",
-    variables: { version: "1.5.0", preferredLanguages: ["en"] }
-  }, { Authorization: token });
-  const qp = parseJSON(q.body);
-  const lang = qp && qp.data && qp.data.globalization && qp.data.globalization.uiLanguage;
-  if (!q.error && q.status >= 200 && q.status < 300 && typeof lang === "string" && lang.length) {
-    return item("Disney+", "接口可达", flag(region));
-  }
-  if (blocked(q)) return item("Disney+", "受限", flag(region));
+  const session = data && data.extensions && data.extensions.sdk && data.extensions.sdk.session;
+  if (!session) return item("Disney+", "未确认");
+  const region = session.location && session.location.countryCode || "";
+  if (session.inSupportedLocation === false) return item("Disney+", "地区不支持", flag(region));
+  if (session.inSupportedLocation === true) return item("Disney+", "地区支持", flag(region));
   return item("Disney+", "未确认", flag(region));
 }
-
 async function spotify() {
   const rs = await Promise.all([
     trace("www.spotify.com"),
