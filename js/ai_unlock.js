@@ -229,7 +229,7 @@ async function main() {
   const results = await Promise.all([
     claude(), gemini(), openai(), youtube(), netflix(), disney(), spotify(), tiktok()
   ]);
-  const serviceWidth = 9, statusWidth = 10;
+  const serviceWidth = 9, statusWidth = 16;
   const lines = results.map(function(x) {
     return padCell(x.name, serviceWidth) + "　" +
       padCell(x.status, statusWidth) + "　" + x.region;
@@ -245,7 +245,7 @@ async function main() {
     title: "AI / 海外媒体检测",
     content: header + "\n" + lines.join("\n") +
       "\n\n检测时间：" + time +
-      "\n说明：可访问仅表示检测接口可响应；可播放仅表示测试视频可播放。未登录账号，不能验证订阅、账号权限及完整片库。",
+      "\n说明：地区支持和目录接口可用不等于实际视频播放成功；未登录账号，不能验证订阅、账号权限及 DRM 播放。",
     icon: uncertain ? "exclamationmark.triangle" : "checkmark.circle",
     "icon-color": uncertain ? "#FF9500" : "#34C759"
   });
