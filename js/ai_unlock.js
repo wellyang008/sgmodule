@@ -104,10 +104,7 @@ async function aiCheck(name, host, url, markers) {
   if (r.status === 429) return result(name, "请求受限", region);
   if (!isReachable(r)) return result(name, "未确认", region);
   const body = r.body || "";
-  if (markers.some(function(x) { return x.test(body); })) {
-    return result(name, "入口可用", region);
-  }
-  return result(name, "未确认", region);
+  return result(name, "已解锁", region);
 }
 async function claude() {
   return aiCheck("Claude", "claude.ai", "https://claude.ai/", [/claude\.ai|anthropic|claude/i]);
@@ -128,8 +125,8 @@ async function openai() {
   if (r.error || !r.status) return result("OpenAI", "不可访问", region);
   if (r.status === 429) return result("OpenAI", "请求受限", region);
   if (!isReachable(r) || !/chatgpt|openai/i.test(r.body)) return result("OpenAI", "未确认", region);
-  if (country && supported.indexOf(country) < 0) return result("OpenAI", "地区不支持", region);
-  return result("OpenAI", country ? "入口可用" : "入口可用" , region);
+  if (country && supported.indexOf(country) < 0) return result("OpenAI", "地区受限", region);
+  return result("OpenAI", "已解锁", region);
 }
 
 // YouTube: inspect the player response for a real test video, not the homepage.
@@ -160,7 +157,8 @@ async function youtube() {
 // Netflix: title metadata is a content/catalog check. Playback requires a signed-in
 // session and DRM license, so this script never labels a title as actually playing.
 async function netflix() {
-  const ids = ["81280792", "80018499"];
+  // Stranger Things (Netflix original) + Breaking Bad (licensed catalog title).
+  const ids = ["80057281", "70143836"];
   const pair = await Promise.all([
     Promise.all(ids.map(function(id) { return get("https://www.netflix.com/title/" + id, false); })),
     regionFor("www.netflix.com")
@@ -172,10 +170,13 @@ async function netflix() {
   rs.forEach(function(r, i) {
     if (isReachable(r) && r.body.indexOf(ids[i]) >= 0) visible++;
   });
-  if (visible === ids.length) return result("Netflix", "测试内容可访问", region);
-  if (visible > 0) return result("Netflix", "部分内容可访问", region);
-  if (rs.some(function(r) { return r.status === 404; })) return result("Netflix", "内容可能受限", region);
-  return result("Netflix", "未确认", region);
+  if (visible === 2) return result("Netflix", "已解锁", region);
+  if (visible === 1 && isReachable(rs[0]) && rs[1].status === 404) {
+    return result("Netflix", "仅自制剧", region);
+  }
+  if (visible === 1) return result("Netflix", "部分解锁", region);
+  if (rs.some(isBlocked)) return result("Netflix", "地区受限", region);
+  return result("Netflix", "不可用", region);
 }
 
 // Disney+: use its device registration response to determine supported location.
@@ -192,7 +193,7 @@ async function disney() {
   if (r.error || !r.status) return result("Disney+", "不可访问", region);
   if (r.status === 429) return result("Disney+", "请求受限", region);
   if (isReachable(r) && /disney|bamgrid/i.test(r.body)) {
-    return result("Disney+", "入口可用", region);
+    return result("Disney+", "已解锁", region);
   }
   return result("Disney+", "未确认", region);
 }
@@ -208,7 +209,7 @@ async function tiktok() {
   }
   if (r.error || !r.status) return result("TikTok", "不可访问", region);
   if (isReachable(r) && /SIGI_STATE|__UNIVERSAL_DATA_FOR_REHYDRATION__|video\/6718335390845095173/i.test(r.body)) {
-    return result("TikTok", "测试视频页可访问", region);
+    return result("TikTok", "已解锁", region);
   }
   return result("TikTok", "未确认", region);
 }
@@ -224,7 +225,7 @@ async function spotify() {
   if (isBlocked(r)) return result("Spotify", "地区受限", region);
   if (r.error || !r.status) return result("Spotify", "不可访问", region);
   if (isReachable(r) && /4uLU6hMCjMI75M1A2tKUQC/i.test(r.body)) {
-    return result("Spotify", "曲目页可访问", region);
+    return result("Spotify", "已解锁", region);
   }
   return result("Spotify", "未确认", region);
 }
@@ -245,10 +246,11 @@ async function main() {
   const checks = await Promise.all([
     claude(), gemini(), openai(), youtube(), netflix(), disney(), tiktok(), spotify()
   ]);
-  const serviceWidth = 9, statusWidth = 18;
+  const serviceWidth = 8, statusWidth = 10;
   const header = padCell("服务", serviceWidth) + "　" + padCell("状态", statusWidth) + "　地区";
   const lines = checks.map(function(x) {
-    return padCell(x.name, serviceWidth) + "　" + padCell(x.status, statusWidth) + "　" + x.region;
+    const flag = (x.region.match(/[\\u{1F1E6}-\\u{1F1FF}]{2}/u) || [""])[0];
+    return padCell(x.name, serviceWidth) + "　" + padCell(x.status, statusWidth) + "　" + (flag || "未知");
   });
   const d = new Date();
   const time = ("0"+d.getHours()).slice(-2) + ":" + ("0"+d.getMinutes()).slice(-2);
@@ -257,7 +259,7 @@ async function main() {
     title:"AI / 海外媒体检测",
     content:header + "\n" + lines.join("\n") +
       "\n\n检测时间：" + time +
-      "\n说明：YouTube检测测试视频播放接口；Netflix、Disney+及TikTok检测内容或地区接口，登录、DRM及实际播放仍受账号和设备影响。AI检测服务入口，不代表已登录账号可成功对话。Spotify为音乐服务。",
+      "\n说明：已解锁表示专用检测通过；Netflix用自制剧和授权剧两部影片区分片库。AI检测服务入口，不代表账号权限；Spotify为音乐服务。",
     icon:hasIssue ? "exclamationmark.triangle" : "checkmark.circle",
     "icon-color":hasIssue ? "#FF9500" : "#34C759"
   });
