@@ -101,7 +101,7 @@ async function netflix() {
     return get("https://www.netflix.com/title/" + id, false);
   }));
   if (rs.some(function(r) { return r.error || !r.status; })) return item("Netflix", "未确认");
-  if (rs.some(function(r) { return r.status === 403 || r.status === 451; })) return item("Netflix", "请求受限");
+  if (rs.some(function(r) { return r.status === 403 || r.status === 451; })) return item("Netflix", "受限");
   // A successful title-page HTTP response does not prove regional playback rights.
   if (rs.some(function(r) { return r.status >= 200 && r.status < 400; })) return item("Netflix", "未确认");
   return item("Netflix", "未确认");
@@ -153,7 +153,7 @@ async function main() {
   });
   $done({
     title: "AI / 海外媒体检测",
-    content: "服务       状态      地区\n" + lines.join("\n") +
+    content: pad("服务", 10) + pad("状态", 11) + "地区\n" + lines.join("\n") +
       "\n\n检测时间：" + time +
       "\n说明：未确认表示请求成功但缺少可用性证据，不代表已解锁。",
     icon: uncertain ? "exclamationmark.triangle" : "checkmark.circle",
