@@ -208,8 +208,30 @@ async function checkDisney() {
   return result("Disney+", "入口可访问", (code ? labelRegion(code) : "地区未知") + "；未验证账号及实际播放权限");
 }
 
+function compactStatus(item) {
+  const text = item.text || "";
+  if (item.name === "OpenAI") {
+    const webOK = /Web 接口检测通过/.test(text);
+    const iosOK = /iOS 接口检测通过/.test(text);
+    const restricted = /地区不支持|ISP 不支持|出口 IP 被封锁|HTTP 403|HTTP 451/.test(text);
+    if (webOK && iosOK) return "可用";
+    if (webOK || iosOK) return "部分可用";
+    if (restricted) return "受限";
+    return "未确认";
+  }
+  if (/地区不支持|该地区不可用|页面提示地区不可用|可能被地区限制|可能受地区限制|可能不可用/.test(text)) return "受限";
+  if (/地区检测通过|页面特征检测通过|完整片库测试通过|地区接口检测通过|地区信号检测通过/.test(text)) return item.name === "Netflix" ? "信号通过" : "可用";
+  return "未确认";
+}
+
+function compactRegion(item) {
+  const detail = item.detail || "";
+  const match = detail.match(/([A-Z]{2})$/);
+  return match ? flag(match[1]) + match[1] : "未知";
+}
+
 async function main() {
-  const jobs = [
+  const values = await Promise.all([
     checkClaude(),
     checkGemini(),
     checkOpenAI(),
@@ -218,17 +240,29 @@ async function main() {
     checkDisney(),
     checkSpotify(),
     checkTikTok()
-  ];
-  const values = await Promise.all(jobs);
-  const lines = values.map(function(item) {
-    return item.name + "： " + item.text + "（" + item.detail + "）";
+  ]);
+
+  const rows = values.map(function(item) {
+    const name = item.name === "YouTube Premium" ? "YouTube" : item.name;
+    return name.padEnd(12, " ") + compactStatus(item).padEnd(10, " ") + compactRegion(item);
   });
+
+  const openAI = values.filter(function(item) { return item.name === "OpenAI"; })[0];
+  const openAIDetail = openAI ? openAI.text.replace(/^Web /, "Web ").replace(" / iOS ", " | iOS ") : "";
   const uncertain = values.filter(function(item) {
-    return /无法判定|检测失败|地区未知/.test(item.text);
+    return compactStatus(item) === "未确认" || compactStatus(item) === "部分可用";
   }).length;
+  const now = new Date();
+  const time = ("0" + now.getHours()).slice(-2) + ":" + ("0" + now.getMinutes()).slice(-2);
+
   $done({
     title: "AI / 海外媒体解锁检测",
-    content: lines.join("\n") + "\n\n说明：地区检测通过不等于账号资格、订阅状态或所有内容均可用。Disney+ 当前只做入口及地区线索检测。",
+    content: "服务        状态      地区\n" +
+      "------------------------------\n" +
+      rows.join("\n") +
+      (openAIDetail ? "\n\nOpenAI：" + openAIDetail : "") +
+      "\n\n检测时间：" + time +
+      "\n注：仅代表公开接口/页面检测信号，不代表账号资格或实际播放权限。",
     icon: uncertain > 0 ? "exclamationmark.triangle" : "checkmark.circle",
     "icon-color": uncertain > 0 ? "#FF9500" : "#34C759"
   });
