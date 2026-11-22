@@ -11,39 +11,39 @@ function get(url) {
   });
 }
 
-async function getRegion() {
-  const r = await get("https://www.cloudflare.com/cdn-cgi/trace");
+// 读取某个域名自己的出口地区（同一条链路）
+async function getRegionFor(host) {
+  const r = await get(`https://${host}/cdn-cgi/trace`);
   if (r.err || !r.data) return null;
   const m = r.data.match(/loc=([A-Z]{2})/);
   return m ? m[1] : null;
 }
 
-function regionLabel(code) {
-  if (!code) return "未知（trace 失败）";
+function regionText(code) {
+  if (!code) return "未获取到";
   return BLOCKED.includes(code) ? `${code}（受限地区）` : code;
 }
 
-// OpenAI / Claude：先看地区，再看页面可达性
-async function checkRegionalService(url, region) {
-  if (region && BLOCKED.includes(region)) return "❌ 受限地区";
+async function checkRegionalService(host, url) {
+  const region = await getRegionFor(host);
+  if (region && BLOCKED.includes(region)) return `❌ 受限地区（${region}）`;
   const r = await get(url);
   if (r.err) return `❔ 网络错误（${r.err}）`;
-  if (r.status === 200) return "✅ 可用";
-  return `❌ 不可用（HTTP ${r.status}）`;
+  if (r.status === 200) return `✅ 可用（${region || "地区未获取"}）`;
+  return `❌ 不可用（HTTP ${r.status}，${region || "地区未获取"}）`;
 }
 
-async function checkGemini(region) {
+async function checkGemini() {
   const r = await get("https://gemini.google.com/app");
   if (r.err) return `❔ 网络错误（${r.err}）`;
   if (r.status === 200 && !/not available in your country/i.test(r.data)) return "✅ 可用";
-  if (region && BLOCKED.includes(region)) return "❌ 受限地区";
   return `❌ 不可用（HTTP ${r.status}）`;
 }
 
-async function checkYouTubePremium(region) {
+async function checkYouTubePremium() {
   const r = await get("https://www.youtube.com/premium");
   if (r.err) return `❔ 网络错误（${r.err}）`;
-  if (/Premium is not available in your country|not available in your country/i.test(r.data)) return "❌ 不支持该地区";
+  if (/not available in your country/i.test(r.data)) return "❌ 不支持该地区";
   if (r.status === 200) return "✅ 可用";
   return `❌ 不可用（HTTP ${r.status}）`;
 }
@@ -58,18 +58,16 @@ async function checkNetflix() {
 }
 
 (async () => {
-  const region = await getRegion();
   const [openai, claude, gemini, youtube, netflix] = await Promise.all([
-    checkRegionalService("https://chatgpt.com/", region),
-    checkRegionalService("https://claude.ai/", region),
-    checkGemini(region),
-    checkYouTubePremium(region),
+    checkRegionalService("chatgpt.com", "https://chatgpt.com/"),
+    checkRegionalService("claude.ai", "https://claude.ai/"),
+    checkGemini(),
+    checkYouTubePremium(),
     checkNetflix()
   ]);
   $done({
     title: "流媒体与 AI 解锁检测",
     content: [
-      `出口地区：${regionLabel(region)}`,
       `ChatGPT：${openai}`,
       `Claude：${claude}`,
       `Gemini：${gemini}`,
