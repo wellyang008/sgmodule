@@ -163,7 +163,7 @@ async function netflix() {
     return item("Netflix", "可用", flag(code));
   }
   if (rs.every(function(r) { return r.status === 404; }))
-    return item("Netflix", "非自制内容未解锁");
+    return item("Netflix", "测试标题不可用");
   return item("Netflix", "未确认");
 }
 
