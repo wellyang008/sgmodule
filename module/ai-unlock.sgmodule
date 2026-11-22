@@ -1,9 +1,10 @@
-#!name=流媒体与AI服务解锁检测
-#!desc=检测 ChatGPT / Claude / Gemini / Netflix / YouTube Premium 的访问状态与出口地区
-#!category=检测
-
-[Panel]
-Unlock-Check = script-name=unlock-check,update-interval=1800
+#!name = 流媒体与 AI 解锁检测
+#!desc = 检测出口地区、Gemini 与 Netflix 解锁状态，每 30 分钟刷新一次
+#!author = wellyang008
+#!homepage = https://github.com/wellyang008/sgmodule
 
 [Script]
-unlock-check = type=generic,timeout=20,script-path=https://raw.githubusercontent.com/wellyang008/sgmodule/main/js/ai_unlock.js
+ai_unlock_cron = type=cron,cronexp="*/30 * * * *",wake-system=1,script-path=https://raw.githubusercontent.com/wellyang008/sgmodule/main/js/ai_unlock.js,timeout=30
+
+[Panel]
+ai_unlock_panel = script-name=ai_unlock_cron,update-interval=1800
