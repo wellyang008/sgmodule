@@ -66,6 +66,26 @@ function trace(host) {
 function parseJSON(s) {
   try { return JSON.parse(s); } catch (e) { return null; }
 }
+function extractObjectAfter(source, marker) {
+  const start = source.indexOf(marker);
+  if (start < 0) return null;
+  const open = source.indexOf("{", start + marker.length);
+  if (open < 0) return null;
+  let depth = 0, quoted = false, escaped = false;
+  for (let i = open; i < source.length; i++) {
+    const ch = source[i];
+    if (quoted) {
+      if (escaped) escaped = false;
+      else if (ch === "\\\\") escaped = true;
+      else if (ch === '"') quoted = false;
+      continue;
+    }
+    if (ch === '"') quoted = true;
+    else if (ch === "{") depth++;
+    else if (ch === "}" && --depth === 0) return parseJSON(source.slice(open, i + 1));
+  }
+  return null;
+}
 
 async function claude() {
   const rs = await Promise.all([trace("claude.ai"), get("https://claude.ai/", false)]);
