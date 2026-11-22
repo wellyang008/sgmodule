@@ -155,8 +155,8 @@ async function youtube() {
   if (page.error || !page.status) return result("YouTube", "不可访问", region);
   if (!isReachable(page)) return result("YouTube", "未确认", region);
 
-  const keyMatch = page.body.match(/"INNERTUBE_API_KEY"\\s*:\\s*"([^"]+)"/);
-  const versionMatch = page.body.match(/"INNERTUBE_CLIENT_VERSION"\\s*:\\s*"([^"]+)"/);
+  const keyMatch = page.body.match(/"INNERTUBE_API_KEY"\s*:\s*"([^"]+)"/);
+  const versionMatch = page.body.match(/"INNERTUBE_CLIENT_VERSION"\s*:\s*"([^"]+)"/);
   if (!keyMatch) return result("YouTube", "未确认", region);
   const clientVersion = versionMatch ? versionMatch[1] : "2.20261120.01.00";
   const api = "https://www.youtube.com/youtubei/v1/player?key=" + encodeURIComponent(keyMatch[1]);
