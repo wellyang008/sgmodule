@@ -229,7 +229,8 @@ async function main() {
   $done({
     title: "AI / 海外媒体解锁检测",
     content: lines.join("\n") + "\n\n说明：地区检测通过不等于账号资格、订阅状态或所有内容均可用。Disney+ 当前只做入口及地区线索检测。",
-    style: uncertain > 0 ? "info" : "good"
+    icon: uncertain > 0 ? "exclamationmark.triangle" : "checkmark.circle",
+    "icon-color": uncertain > 0 ? "#FF9500" : "#34C759"
   });
 }
 
@@ -237,6 +238,7 @@ main().catch(function(error) {
   $done({
     title: "AI / 海外媒体解锁检测",
     content: "检测脚本异常：" + String(error),
-    style: "error"
+    icon: "exclamationmark.triangle",
+    "icon-color": "#FF3B30"
   });
 });
