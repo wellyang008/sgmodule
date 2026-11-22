@@ -108,29 +108,23 @@ async function gemini() {
 
 async function openai() {
   const rs = await Promise.all([
-    trace("chatgpt.com"),
-    get("https://chatgpt.com/", false),
-    get("https://api.openai.com/v1/models", false),
+    get("https://chat.openai.com/", false),
+    trace("chat.openai.com"),
     get("https://ios.chat.openai.com/", false)
   ]);
-  const region = flag(traceCode(rs[0].body));
-  const web = rs[1], api = rs[2], ios = rs[3];
-  const webOK = reachable(web) && /chatgpt|openai/i.test(web.body);
-  let apiOK = false;
-  const ap = parseJSON(api.body);
-  // An unauthenticated 401 with the documented missing/invalid-key error proves API edge reachability only.
-  if (api.status === 401 && ap && ap.error &&
-      /invalid_api_key|missing_api_key/i.test(String(ap.error.code || ""))) apiOK = true;
+  const home = rs[0], regionCode = traceCode(rs[1].body), ios = rs[2];
+  const supported = ["T1","XX","AL","DZ","AD","AO","AG","AR","AM","AU","AT","AZ","BS","BD","BB","BE","BZ","BJ","BT","BA","BW","BR","BG","BF","CV","CA","CL","CO","KM","CR","HR","CY","DK","DJ","DM","DO","EC","SV","EE","FJ","FI","FR","GA","GM","GE","DE","GH","GR","GD","GT","GN","GW","GY","HT","HN","HU","IS","IN","ID","IQ","IE","IL","IT","JM","JP","JO","KZ","KE","KI","KW","KG","LV","LB","LS","LR","LI","LT","LU","MG","MW","MY","MV","ML","MT","MH","MR","MU","MX","MC","MN","ME","MA","MZ","MM","NA","NR","NP","NL","NZ","NI","NE","NG","MK","NO","OM","PK","PW","PA","PG","PE","PH","PL","PT","QA","RO","RW","KN","LC","VC","WS","SM","ST","SN","RS","SC","SL","SG","SK","SI","SB","ZA","ES","LK","SR","SE","CH","TH","TG","TO","TT","TN","TR","TV","UG","AE","US","UY","VU","ZM","BO","BN","CG","CZ","VA","FM","MD","PS","KR","TW","TZ","TL","GB"];
+  const contentType = headerValue(home.headers, "content-type").toLowerCase();
   const iosOK = reachable(ios) && /chatgpt|openai/i.test(ios.body);
-  if (blocked(web) && blocked(api) && blocked(ios)) return item("OpenAI", "受限", region);
-  const signals = [webOK, apiOK, iosOK].filter(Boolean).length;
-  if (signals >= 2) return item("OpenAI", "可访问", region);
-  if (signals === 1) return item("OpenAI", "部分可达", region);
-  if ([web, api, ios].every(function(r) { return r.error || !r.status; })) return item("OpenAI", "不可访问", region);
-  if (blocked(web) || blocked(api) || blocked(ios)) return item("OpenAI", "受限", region);
-  return item("OpenAI", "未确认", region);
+  if (blocked(home)) return item("OpenAI", "受限", flag(regionCode));
+  if (home.error || !home.status) return item("OpenAI", iosOK ? "部分可达" : "不可访问", flag(regionCode));
+  if (contentType.indexOf("text/plain") >= 0) return item("OpenAI", "受限", flag(regionCode));
+  if (regionCode && supported.indexOf(regionCode) >= 0) {
+    return item("OpenAI", iosOK ? "地区支持" : "Web地区支持", flag(regionCode));
+  }
+  if (regionCode) return item("OpenAI", "地区不支持", flag(regionCode));
+  return item("OpenAI", iosOK ? "部分可达" : "未确认", "未知");
 }
-
 async function youtube() {
   const rs = await Promise.all([
     trace("www.youtube.com"),
