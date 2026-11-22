@@ -135,9 +135,9 @@ async function main() {
   });
   $done({
     title: "AI / 海外媒体检测",
-    content: "服务" + gap + "状态" + gap + "地区\\n" + lines.join("\\n") +
-      "\\n\\n检测时间：" + time +
-      "\\n说明：未确认表示检测信号不足，不代表服务不可用；地区为服务响应中识别到的地区。",
+    content: "服务" + gap + "状态" + gap + "地区\n" + lines.join("\n") +
+      "\n\n检测时间：" + time +
+      "\n说明：未确认表示检测信号不足，不代表服务不可用；地区为服务响应中识别到的地区。",
     icon: uncertain ? "exclamationmark.triangle" : "checkmark.circle",
     "icon-color": uncertain ? "#FF9500" : "#34C759"
   });
