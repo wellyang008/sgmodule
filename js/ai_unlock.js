@@ -67,16 +67,32 @@ async function claude() {
   return c ? item("Claude", restricted(c) ? "受限" : "可用", flag(c)) : item("Claude", "未确认");
 }
 
-async function gemini() {
-  const r = await get("https://gemini.google.com/");
-  if (r.error || r.status < 200 || r.status >= 400) return item("Gemini", "不可访问");
-  const m = r.body.match(/"(?:countryCode|country_code|GL)"\s*:\s*"([A-Z]{2,3})"/);
-  if (!m) return item("Gemini", "未确认");
-  const c = m[1].toUpperCase();
-  const blocked = ["CN","CHN","RU","RUS","IR","IRN","KP","PRK","SY","SYR","BY","BLR","CU","CUB","HK","HKG","MO","MAC"].indexOf(c) >= 0;
-  return item("Gemini", blocked ? "受限" : "可用", c);
-}
 
+async function gemini() {
+  const r = await get("https://gemini.google.com/", false);
+  if (r.error || !r.status) return item("Gemini", "不可访问");
+  if (r.status === 403 || r.status === 451) return item("Gemini", "受限");
+  if (r.status < 200 || r.status >= 400) return item("Gemini", "不可访问");
+  const marker = ',2,1,200,"';
+  const idx = r.body.indexOf(marker);
+  let code3 = idx >= 0 ? r.body.slice(idx + marker.length, idx + marker.length + 3) : "";
+  if (!/^[A-Z]{3}$/.test(code3)) {
+    const m = r.body.match(/"(?:countryCode|country_code|GL)"\s*:\s*"([A-Z]{2,3})"/);
+    code3 = m ? m[1].toUpperCase() : "";
+  }
+  const map = {
+    USA:"US", GBR:"GB", CAN:"CA", AUS:"AU", JPN:"JP", SGP:"SG",
+    FRA:"FR", DEU:"DE", KOR:"KR", TWN:"TW", HKG:"HK", MAC:"MO",
+    CHN:"CN", IND:"IN", MYS:"MY", THA:"TH", IDN:"ID", PHL:"PH",
+    NZL:"NZ", BRA:"BR", MEX:"MX", ESP:"ES", ITA:"IT", NLD:"NL",
+    CHE:"CH", SWE:"SE", NOR:"NO", DNK:"DK", IRL:"IE", POL:"PL",
+    RUS:"RU", BLR:"BY", IRN:"IR", PRK:"KP", SYR:"SY", CUB:"CU"
+  };
+  const code = map[code3] || (/^[A-Z]{2}$/.test(code3) ? code3 : "");
+  if (!code) return item("Gemini", "未确认");
+  const blocked = ["AF","BY","CN","CU","IR","KP","RU","SY"].indexOf(code) >= 0;
+  return item("Gemini", blocked ? "受限" : "可用", flag(code));
+}
 async function openai() {
   const rs = await Promise.all([
     get("https://chatgpt.com/cdn-cgi/trace"),
