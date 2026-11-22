@@ -158,28 +158,22 @@ function headerValue(headers, key) {
   return "";
 }
 async function netflix() {
-  const ids = ["80018499", "70143836"];
-  const rs = await Promise.all(ids.map(function(id) {
-    return get("https://www.netflix.com/title/" + id, false);
-  }));
-  if (rs.every(function(r) { return r.error || !r.status; })) return item("Netflix", "不可访问");
-  if (rs.every(blocked)) return item("Netflix", "受限");
-  let country = "";
-  let titleSignals = 0;
-  rs.forEach(function(r, i) {
-    const origin = headerValue(r.headers, "x-originating-url");
-    const cm = origin.match(/(?:^|[\/?&])([A-Z]{2})(?:[\/?&]|$)/) ||
-      r.body.match(/"countryCode"\s*:\s*"([A-Z]{2})"/i);
-    if (!country && cm) country = cm[1].toUpperCase();
-    if (reachable(r) && new RegExp('"titleId"\\s*:\\s*"?'+ ids[i] + '"?').test(r.body)) titleSignals++;
-  });
-  // Netflix's public title page is not proof of full catalog or playback entitlement.
-  if (titleSignals === 2) return item("Netflix", "标题可见", flag(country));
-  if (titleSignals === 1) return item("Netflix", "部分可见", flag(country));
-  if (rs.every(function(r) { return r.status === 404; })) return item("Netflix", "测试标题不可用", flag(country));
-  return item("Netflix", "未确认", flag(country));
+  // Fixed title probe, HTTP status and X-Originating-URL region.
+  const r = await get("https://www.netflix.com/title/81280792", false);
+  if (r.error || !r.status) return item("Netflix", "不可访问");
+  if (r.status === 403 || r.status === 451) return item("Netflix", "地区受限");
+  if (r.status === 404) return item("Netflix", "仅自制剧");
+  if (r.status !== 200) return item("Netflix", "未确认");
+  const origin = headerValue(r.headers, "x-originating-url");
+  let code = "";
+  if (origin) {
+    const path = origin.replace(/^https?:\/\/[^/]+/i, "");
+    const parts = path.split("/").filter(Boolean);
+    const candidate = parts.find(function(x) { return /^[a-z]{2}(-[a-z]{2})?$/i.test(x); });
+    if (candidate) code = candidate.slice(0, 2).toUpperCase();
+  }
+  return item("Netflix", "目录接口支持", flag(code));
 }
-
 async function disney() {
   const auth = "ZGlzbmV5JmJyb3dzZXImMS4wLjA.Cu56AgSfBTDag5NiRA81oLHkDZfu5L3CKadnefEAY84";
   const r = await post("https://disney.api.edge.bamgrid.com/graph/v1/device/graphql", {
