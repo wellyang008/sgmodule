@@ -14,6 +14,7 @@ function get(url, redirect) {
         error: !!err,
         status: res ? Number(res.status) : 0,
         headers: res && res.headers ? res.headers : {},
+        url: res && res.url ? res.url : url,
         body: typeof body === "string" ? body : ""
       });
     });
@@ -97,60 +98,55 @@ async function openai() {
   return item("OpenAI", status, flag(code));
 }
 
+
 async function youtube() {
-  const home = await get("https://www.youtube.com/", false);
-  if (home.error || home.status < 200 || home.status >= 400)
-    return item("YouTube", home.status === 403 || home.status === 451 ? "受限" : "不可访问");
-  const key = home.body.match(/"INNERTUBE_API_KEY"\s*:\s*"([^"]+)"/);
-  const ver = home.body.match(/"INNERTUBE_CLIENT_VERSION"\s*:\s*"([^"]+)"/);
-  const regionMatch = home.body.match(/"GL"\s*:\s*"([A-Z]{2})"/);
-  const region = regionMatch ? regionMatch[1] : traceCode(home.body);
-  if (!key) return item("YouTube", "未确认", flag(region));
-  const player = await post(
-    "https://www.youtube.com/youtubei/v1/player?key=" + key[1],
-    {
-      videoId: "M7lc1UVf-VE",
-      context: { client: {
-        clientName: "WEB",
-        clientVersion: ver ? ver[1] : "2.20261120.01.00",
-        hl: "en", gl: region || "US"
-      }}
-    },
-    { "X-YouTube-Client-Name": "1", "X-YouTube-Client-Version": ver ? ver[1] : "2.20261120.01.00" }
-  );
-  if (player.error || !player.status) return item("YouTube", "不可访问", flag(region));
-  let data;
-  try { data = JSON.parse(player.body); } catch (e) { return item("YouTube", "未确认", flag(region)); }
-  const state = data && data.playabilityStatus && data.playabilityStatus.status;
-  const reason = data && data.playabilityStatus && data.playabilityStatus.reason || "";
-  if (state === "OK") return item("YouTube", "可用", flag(region));
-  if (state === "UNPLAYABLE" || state === "LOGIN_REQUIRED" || /not available in your country|geo.?restrict/i.test(reason))
-    return item("YouTube", "受限", flag(region));
-  return item("YouTube", "未确认", flag(region));
+  const r = await get("https://www.youtube.com/premium?hl=en", false);
+  if (r.error || !r.status) return item("YouTube", "不可访问");
+  if (r.status === 403 || r.status === 451 ||
+      /premium is not available in your (country|region)/i.test(r.body))
+    return item("YouTube", "受限");
+  if (r.status < 200 || r.status >= 400) return item("YouTube", "不可访问");
+  const m = r.body.match(/id=["']country-code["'][^>]*>\s*([A-Za-z]{2,3})\s*</i) ||
+    r.body.match(/"GL"\s*:\s*"([A-Z]{2})"/) ||
+    r.body.match(/"countryCode"\s*:\s*"([A-Z]{2})"/);
+  const code = m ? m[1].toUpperCase().slice(0,2) : traceCode(r.body);
+  const body = r.body.toLowerCase();
+  if (/youtube premium|ad-free|"browseid"\s*:\s*"spunlimited"/.test(body))
+    return item("YouTube", "可用", flag(code));
+  return item("YouTube", "未确认", flag(code));
 }
 
+
 async function netflix() {
+  const cdn = await get("https://api.fast.com/netflix/speedtest/v2?https=true&token=YXNkZmFzZGxmbnNkYWZoYXNkZmhrYWxm&urlCount=5", false);
+  if (!cdn.error && cdn.status >= 200 && cdn.status < 300) {
+    try {
+      const data = JSON.parse(cdn.body);
+      const code = data.targets && data.targets[0] && data.targets[0].location &&
+        data.targets[0].location.country || "";
+      if (code) return item("Netflix", "可用", flag(code.toUpperCase()));
+    } catch (e) {}
+  }
   const ids = ["81280792", "70143836"];
   const rs = await Promise.all(ids.map(function(id) {
     return get("https://www.netflix.com/title/" + id, false);
   }));
   if (rs.every(function(r) { return r.error || !r.status; })) return item("Netflix", "不可访问");
-  if (rs.some(function(r) { return r.status === 403 || r.status === 451; })) return item("Netflix", "受限");
-  const full = rs.some(function(r) { return /property=["']og:video["']/i.test(r.body); });
+  if (rs.some(function(r) { return r.status === 403 || r.status === 451; }))
+    return item("Netflix", "受限");
+  if (rs.every(function(r) { return r.status === 404 || /page-404|nsez-403/i.test(r.body); }))
+    return item("Netflix", "部分可用");
+  const rr = await get("https://www.netflix.com/title/80018499", false);
   let region = "";
-  for (let i = 0; i < rs.length && !region; i++) {
-    const m = rs[i].body.match(/netflix\.reactContext\s*=\s*(\{[\s\S]*?\})\s*;/);
-    if (m) {
-      try {
-        const ctx = JSON.parse(m[1]);
-        region = ctx.models && ctx.models.geo && ctx.models.geo.data &&
-          ctx.models.geo.data.requestCountry && ctx.models.geo.data.requestCountry.id || "";
-      } catch (e) {}
-    }
+  const loc = rr.headers.location || rr.headers.Location || "";
+  const m = loc.match(/\/([a-z]{2})-[^/]+\//i);
+  if (m) region = m[1].toUpperCase();
+  if (!region && rr.url) {
+    const u = rr.url.match(/\/([a-z]{2})-[^/]+\//i);
+    if (u) region = u[1].toUpperCase();
   }
-  if (full) return item("Netflix", "可用", flag(region));
-  if (rs.some(function(r) { return r.status >= 200 && r.status < 400 && r.body.length > 1000; }))
-    return item("Netflix", "部分可用", flag(region));
+  if (rs.some(function(r) { return r.status === 200 || r.status === 301 || r.status === 302; }))
+    return item("Netflix", "可用", flag(region));
   return item("Netflix", "未确认", flag(region));
 }
 
@@ -201,18 +197,43 @@ async function disney() {
   return item("Disney+", "未确认", flag(region));
 }
 
+
 async function spotify() {
   const r = await get("https://www.spotify.com/api/content/v1/country-selector?platform=web&format=json", false);
   if (r.error || !r.status) return item("Spotify", "不可访问");
   if (r.status === 403 || r.status === 451) return item("Spotify", "受限");
-  return item("Spotify", "未确认");
+  if (r.status < 200 || r.status >= 400) return item("Spotify", "不可访问");
+  let code = "";
+  const m = r.body.match(/"countryCode"\s*:\s*"([A-Z]{2})"/i);
+  if (m) code = m[1].toUpperCase();
+  if (!code) {
+    const u = (r.url || "").match(/\/([a-z]{2})(?:-[^/]+)?\//i);
+    if (u) code = u[1].toUpperCase();
+  }
+  if (/not available in your country/i.test(r.body)) return item("Spotify", "受限", flag(code));
+  if (r.status >= 200 && r.status < 300) return item("Spotify", "可用", flag(code));
+  return item("Spotify", "未确认", flag(code));
 }
 
+
 async function tiktok() {
-  const r = await get("https://www.tiktok.com/");
-  if (r.error || r.status < 200 || r.status >= 400) return item("TikTok", "不可访问");
-  if (/access denied|not available in your region|tiktok is not available/i.test(r.body)) return item("TikTok", "受限");
-  return item("TikTok", "未确认");
+  const r = await get("https://www.tiktok.com/cdn-cgi/trace", false);
+  let code = "";
+  if (!r.error && r.status >= 200 && r.status < 300) {
+    const m = r.body.match(/(?:^|\n)region=([A-Z]{2})(?:\n|$)/) ||
+      r.body.match(/(?:^|\n)loc=([A-Z]{2})(?:\n|$)/);
+    if (m) code = m[1];
+    if (code && ["AF","CN","IN","IR","KP"].indexOf(code) >= 0)
+      return item("TikTok", "受限", flag(code));
+    if (code) return item("TikTok", "可用", flag(code));
+  }
+  const home = await get("https://www.tiktok.com/", false);
+  if (home.error || !home.status) return item("TikTok", "不可访问", flag(code));
+  if (home.status === 403 || home.status === 451 ||
+      /access denied|not available in your region|tiktok is not available/i.test(home.body))
+    return item("TikTok", "受限", flag(code));
+  if (home.status >= 200 && home.status < 400) return item("TikTok", "可用", flag(code));
+  return item("TikTok", "未确认", flag(code));
 }
 
 function visualWidth(str) {
