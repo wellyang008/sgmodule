@@ -134,20 +134,20 @@ async function openai() {
 async function youtube() {
   const rs = await Promise.all([
     trace("www.youtube.com"),
-    get("https://www.youtube.com/watch?v=jNQXAC9IVRw&hl=en", false)
+    get("https://www.youtube.com/premium", false)
   ]);
-  const region = flag(traceCode(rs[0].body)), r = rs[1];
-  if (blocked(r) || /sorry\/index|unusual traffic/i.test(r.body)) return item("YouTube", "受限", region);
-  if (!reachable(r)) return item("YouTube", r.error || !r.status ? "不可访问" : "未确认", region);
-  // Parse the player response; page text or a Premium marketing keyword is not a playback signal.
-  const p = extractObjectAfter(r.body, "ytInitialPlayerResponse");
-  const ps = p && p.playabilityStatus;
-  if (ps && ps.status === "OK") return item("YouTube", "可播放", region);
-  if (ps && /GEO|COUNTRY|REGION/i.test(String(ps.reason || "") + " " + String(ps.status || ""))) return item("YouTube", "受限", region);
-  if (ps && ps.status) return item("YouTube", "未确认", region);
-  return item("YouTube", "未确认", region);
+  const regionCode = traceCode(rs[0].body), r = rs[1];
+  if (r.error || !r.status) return item("YouTube", "不可访问", flag(regionCode));
+  if (r.status === 403 || r.status === 451 ||
+      /premium is not available in your country|premium is not available in your region/i.test(r.body)) {
+    return item("YouTube", "Premium不支持", flag(regionCode));
+  }
+  if (r.status !== 200) return item("YouTube", "未确认", flag(regionCode));
+  const m = r.body.match(/"GL"\s*:\s*"([A-Z]{2})"/);
+  const code = m ? m[1] : regionCode;
+  if (!code) return item("YouTube", "Premium页面可达", "未知");
+  return item("YouTube", "Premium地区支持", flag(code));
 }
-
 function headerValue(headers, key) {
   if (!headers) return "";
   const target = key.toLowerCase();
