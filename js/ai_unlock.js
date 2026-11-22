@@ -8,7 +8,7 @@ const HEADERS = {
   "Accept-Language": "en-US,en;q=0.9"
 };
 
-function request(method, url, body, headers, redirect, timeout) {
+function request(method, url, body, headers, redirect, timeout, policy) {
   return new Promise(function(resolve) {
     const opts = {
       url: url,
@@ -16,6 +16,7 @@ function request(method, url, body, headers, redirect, timeout) {
       timeout: timeout || 18,
       "auto-redirect": redirect !== false
     };
+    if (policy) opts.policy = policy;
     if (body !== undefined && body !== null) {
       opts.body = typeof body === "string" ? body : JSON.stringify(body);
     }
@@ -32,8 +33,43 @@ function request(method, url, body, headers, redirect, timeout) {
     else $httpClient.get(opts, done);
   });
 }
+const routePending = {};
+const routeCache = {};
+function hostnameOf(url) {
+  const m = String(url || "").match(/^https?:\/\/([^/:?#]+)/i);
+  return m ? m[1].toLowerCase() : "";
+}
+function recentPolicy(host) {
+  return new Promise(function(resolve) {
+    if (typeof $httpAPI !== "function") return resolve("");
+    $httpAPI("GET", "/v1/requests/recent", {}, function(data) {
+      const list = Array.isArray(data) ? data :
+        (data && (data.requests || data.results || data.items)) || [];
+      let found = "";
+      for (let i = list.length - 1; i >= 0; i--) {
+        const item = list[i] || {};
+        const rawURL = item.URL || item.url || item.requestURL || "";
+        const itemHost = hostnameOf(rawURL) || String(item.host || "").toLowerCase();
+        if (itemHost === host) {
+          found = String(item.policyName || item.policy || item.policy_name || "");
+          if (found) break;
+        }
+      }
+      resolve(found);
+    });
+  });
+}
 function get(url, redirect, headers) {
-  return request("GET", url, null, headers, redirect, 18);
+  const host = hostnameOf(url);
+  let p = request("GET", url, null, headers, redirect, 18);
+  if (host) {
+    p = p.then(async function(response) {
+      routeCache[host] = await recentPolicy(host);
+      return response;
+    });
+    routePending[host] = p.then(function() { return routeCache[host] || ""; });
+  }
+  return p;
 }
 function post(url, body, headers) {
   return request("POST", url, body, Object.assign({"Content-Type":"application/json"}, headers || {}), true, 20);
@@ -85,19 +121,32 @@ function extractObject(source, marker) {
   }
   return null;
 }
-async function trace(host) {
-  return get("https://" + host + "/cdn-cgi/trace", false);
-}
-let regionPromise = null;
 async function regionFor(host) {
-  // Use one known Cloudflare endpoint for the actual Surge egress region.
-  // Third-party service domains do not necessarily expose Cloudflare Trace.
-  if (!regionPromise) {
-    regionPromise = trace("www.cloudflare.com").then(function(r) {
-      return countryFromText(r.body);
-    }).catch(function() { return ""; });
+  // Wait until the target service request has been recorded by Surge.
+  // Reuse its actual matched policy for the IP-echo request, then GeoIP that IP.
+  try {
+    const pending = routePending[host];
+    if (!pending) return "";
+    const policy = await pending;
+    if (!policy) return "";
+    const probe = await request(
+      "GET",
+      "https://api.ipify.org?format=json",
+      null,
+      {"Accept":"application/json"},
+      true,
+      12,
+      policy
+    );
+    if (!isReachable(probe)) return "";
+    const data = json(probe.body);
+    const ip = data && String(data.ip || "");
+    if (!ip || typeof $utils === "undefined" || typeof $utils.geoip !== "function") return "";
+    const country = String($utils.geoip(ip) || "").toUpperCase();
+    return /^[A-Z]{2}$/.test(country) ? country : "";
+  } catch (e) {
+    return "";
   }
-  return regionPromise;
 }
 
 // AI checks: verifies the actual product entry point and explicit regional blocks.
@@ -308,7 +357,7 @@ async function main() {
     title:"AI / 海外媒体检测",
     content:header + "\n" + lines.join("\n") +
       "\n\n检测时间：" + time +
-      "\n说明：地区取自同一出口的 Cloudflare Trace。YouTube 已解锁表示测试视频播放器返回 OK；Netflix 按自制剧和授权剧样本判断，不代表全片库；Disney+ 仅凭官网不能确认播放。AI 入口通过不代表账号权限；Spotify 为音乐服务。",
+      "\n说明：地区根据各服务实际命中的 Surge 策略查询出口 IP，再通过 GeoIP 识别。YouTube 已解锁表示测试视频播放器返回 OK；Netflix 按自制剧和授权剧样本判断，不代表全片库；Disney+ 仅凭官网不能确认播放。AI 入口通过不代表账号权限；Spotify 为音乐服务。",
     icon:hasIssue ? "exclamationmark.triangle" : "checkmark.circle",
     "icon-color":hasIssue ? "#FF9500" : "#34C759"
   });
