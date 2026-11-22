@@ -226,8 +226,10 @@ function compactStatus(item) {
 
 function compactRegion(item) {
   const detail = item.detail || "";
-  const match = detail.match(/([A-Z]{2})$/);
-  return match ? flag(match[1]) + match[1] : "未知";
+  const match = detail.match(/([A-Z]{2})(?:；.*)?$/) || detail.match(/地区码 ([A-Z]{3})$/);
+  if (!match) return "未知";
+  const code = match[1].toUpperCase();
+  return code.length === 2 ? flag(code) + code : code;
 }
 
 async function main() {
@@ -247,8 +249,6 @@ async function main() {
     return name.padEnd(12, " ") + compactStatus(item).padEnd(10, " ") + compactRegion(item);
   });
 
-  const openAI = values.filter(function(item) { return item.name === "OpenAI"; })[0];
-  const openAIDetail = openAI ? openAI.text.replace(/^Web /, "Web ").replace(" / iOS ", " | iOS ") : "";
   const uncertain = values.filter(function(item) {
     return compactStatus(item) === "未确认" || compactStatus(item) === "部分可用";
   }).length;
@@ -260,7 +260,6 @@ async function main() {
     content: "服务        状态      地区\n" +
       "------------------------------\n" +
       rows.join("\n") +
-      (openAIDetail ? "\n\nOpenAI：" + openAIDetail : "") +
       "\n\n检测时间：" + time +
       "\n注：仅代表公开接口/页面检测信号，不代表账号资格或实际播放权限。",
     icon: uncertain > 0 ? "exclamationmark.triangle" : "checkmark.circle",
