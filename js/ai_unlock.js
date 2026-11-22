@@ -140,8 +140,8 @@ async function youtube() {
   if (blocked(r) || /sorry\/index|unusual traffic/i.test(r.body)) return item("YouTube", "受限", region);
   if (!reachable(r)) return item("YouTube", r.error || !r.status ? "不可访问" : "未确认", region);
   // Parse the player response; page text or a Premium marketing keyword is not a playback signal.
-  const m = r.body.match(/ytInitialPlayerResponse\s*=\s*(\{[\s\S]*?\})\s*;\s*<\/script>/);
-  const p = m ? parseJSON(m[1]) : null;
+  const p = extractObjectAfter(r.body, "ytInitialPlayerResponse");
+  const ps = p && p.playabilityStatus;
   const ps = p && p.playabilityStatus;
   if (ps && ps.status === "OK") return item("YouTube", "可播放", region);
   if (ps && /GEO|COUNTRY|REGION/i.test(String(ps.reason || "") + " " + String(ps.status || ""))) return item("YouTube", "受限", region);
