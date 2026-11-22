@@ -61,197 +61,133 @@ function restricted(code) {
 }
 
 
+
 async function claude() {
-  const rs = await Promise.all([
-    get("https://claude.ai/cdn-cgi/trace"),
-    get("https://claude.ai/", false)
-  ]);
-  const trace = rs[0], home = rs[1];
-  const code = traceCode(trace.body);
-  const region = flag(code);
-  const blocked = [trace,home].some(function(r) {
-    return r.status === 403 || r.status === 451 ||
-      /app unavailable|not available in your region|unsupported country/i.test(r.body);
-  });
-  if (blocked) return item("Claude", "受限", region);
-  if ((!trace.error && trace.status === 200) &&
-      (!home.error && home.status >= 200 && home.status < 400))
-    return item("Claude", "可达", region);
-  if (!trace.error && trace.status === 200) return item("Claude", "可达", region);
-  if (home.status === 403 || home.status === 451) return item("Claude", "受限", region);
-  return item("Claude", "不可访问", region);
+  const rs = await Promise.all([get("https://claude.ai/cdn-cgi/trace"),get("https://claude.ai/",false)]);
+  const trace=rs[0], home=rs[1], region=flag(traceCode(trace.body));
+  if ([trace,home].some(r=>r.status===403||r.status===451||/app unavailable|not available in your region|unsupported country/i.test(r.body))) return item("Claude","受限",region);
+  if (!home.error && home.status>=200 && home.status<400 && /sign in to claude|talk to claude|anthropic/i.test(home.body)) return item("Claude","可访问",region);
+  if (home.error||!home.status) return item("Claude","不可访问",region);
+  return item("Claude","未确认",region);
 }
+
 
 
 async function gemini() {
-  const r = await get("https://gemini.google.com/", false);
-  if (r.error || !r.status) return item("Gemini", "不可访问");
-  if (r.status === 403 || r.status === 451) return item("Gemini", "受限");
-  if (r.status < 200 || r.status >= 400) return item("Gemini", "不可访问");
-  if (/isn't supported in your country|not available in your region|not available in your country/i.test(r.body))
-    return item("Gemini", "受限");
-  const marker = ',2,1,200,"';
-  const idx = r.body.indexOf(marker);
-  let c3 = idx >= 0 ? r.body.slice(idx + marker.length, idx + marker.length + 3) : "";
-  if (!/^[A-Z]{3}$/.test(c3)) {
-    const m = r.body.match(/"(?:countryCode|country_code|GL)"\s*:\s*"([A-Z]{2,3})"/);
-    c3 = m ? m[1].toUpperCase() : "";
-  }
-  const map = {USA:"US",GBR:"GB",CAN:"CA",AUS:"AU",JPN:"JP",SGP:"SG",FRA:"FR",DEU:"DE",KOR:"KR",TWN:"TW",HKG:"HK",MAC:"MO",CHN:"CN",IND:"IN",MYS:"MY",THA:"TH",IDN:"ID",PHL:"PH",NZL:"NZ",BRA:"BR",MEX:"MX",ESP:"ES",ITA:"IT",NLD:"NL",CHE:"CH",SWE:"SE",NOR:"NO",DNK:"DK",IRL:"IE",POL:"PL",RUS:"RU",BLR:"BY",IRN:"IR",PRK:"KP",SYR:"SY",CUB:"CU"};
-  const code = map[c3] || (/^[A-Z]{2}$/.test(c3) ? c3 : traceCode(r.body));
-  return item("Gemini", "可达", flag(code));
+  const r=await get("https://gemini.google.com/",false);
+  if(r.error||!r.status)return item("Gemini","不可访问");
+  if(r.status===403||r.status===451||/isn't supported in your country|not available in your region|not available in your country/i.test(r.body))return item("Gemini","受限");
+  if(r.status<200||r.status>=400)return item("Gemini","不可访问");
+  if(!/bard|gemini|batchexecute|_basejs|accounts\\.google/i.test(r.body))return item("Gemini","未确认");
+  const m=r.body.match(/"(?:countryCode|country_code|GL)"\\s*:\\s*"([A-Z]{2})"/);
+  return item("Gemini","可访问",flag(m?m[1]:traceCode(r.body)));
 }
+
 
 
 async function openai() {
-  const rs = await Promise.all([
-    get("https://chatgpt.com/cdn-cgi/trace"),
-    get("https://api.openai.com/v1/models", false),
-    get("https://ios.chat.openai.com/", false)
-  ]);
-  const code = traceCode(rs[0].body);
-  const api = rs[1], ios = rs[2];
-  const apiBlocked = api.status === 403 || api.status === 451 ||
-    /unsupported_country|unsupported country|access denied/i.test(api.body);
-  const iosBlocked = ios.status === 403 || ios.status === 451 ||
-    /disallowed isp|you have been blocked|unsupported country/i.test(ios.body);
-  const webOK = !api.error && (api.status === 200 || api.status === 401);
-  const iosOK = !ios.error && ios.status >= 200 && ios.status < 400;
-  let status = "不可访问";
-  if (apiBlocked && iosBlocked) status = "受限";
-  else if (webOK && iosOK) status = "可达";
-  else if (webOK || iosOK) status = "部分可达";
-  else if (apiBlocked || iosBlocked) status = "受限";
-  return item("OpenAI", status, flag(code));
+  const rs=await Promise.all([get("https://chatgpt.com/cdn-cgi/trace"),get("https://api.openai.com/v1/models",false),get("https://ios.chat.openai.com/",false)]);
+  const code=traceCode(rs[0].body),api=rs[1],ios=rs[2];
+  const apiBlocked=api.status===403||api.status===451||/unsupported_country|unsupported country|access denied/i.test(api.body);
+  const iosBlocked=ios.status===403||ios.status===451||/disallowed isp|you have been blocked|unsupported country/i.test(ios.body);
+  let apiSignal=false;
+  try{const p=JSON.parse(api.body);apiSignal=api.status===401&&p&&p.error&&/invalid_api_key|missing_api_key/i.test(String(p.error.code||p.error.message||""));}catch(e){}
+  const iosSignal=!ios.error&&ios.status>=200&&ios.status<400&&/chatgpt|openai|ios/i.test(ios.body)&&!/request is not allowed|blocked|unsupported country/i.test(ios.body);
+  let status="未确认";
+  if(apiBlocked&&iosBlocked)status="受限";
+  else if(apiSignal&&iosSignal)status="可访问";
+  else if(apiSignal||iosSignal)status="部分可达";
+  else if(api.error&&ios.error)status="不可访问";
+  else if(apiBlocked||iosBlocked)status="受限";
+  return item("OpenAI",status,flag(code));
 }
+
 
 
 async function youtube() {
-  const r = await get("https://www.youtube.com/premium?hl=en", false);
-  if (r.error || !r.status) return item("YouTube", "不可访问");
-  if (r.status === 403 || r.status === 451 || /google\.com\/sorry|unusual traffic/i.test(r.body))
-    return item("YouTube", "受限");
-  if (r.status < 200 || r.status >= 400) return item("YouTube", "不可访问");
-  if (/premium is not available in your (country|region)/i.test(r.body))
-    return item("YouTube", "Premium受限");
-  const m = r.body.match(/"GL"\s*:\s*"([A-Z]{2})"/) ||
-    r.body.match(/"countryCode"\s*:\s*"([A-Z]{2})"/);
-  const code = m ? m[1] : traceCode(r.body);
-  return item("YouTube", "可达", flag(code));
+  const r=await get("https://www.youtube.com/premium?hl=en",false);
+  if(r.error||!r.status)return item("YouTube","不可访问");
+  if(r.status===403||r.status===451||/google\\.com\\/sorry|unusual traffic/i.test(r.body))return item("YouTube","受限");
+  if(r.status<200||r.status>=400)return item("YouTube","不可访问");
+  if(/premium is not available in your (country|region)/i.test(r.body))return item("YouTube","Premium受限");
+  const m=r.body.match(/"GL"\\s*:\\s*"([A-Z]{2})"/)||r.body.match(/"countryCode"\\s*:\\s*"([A-Z]{2})"/);
+  const code=m?m[1]:traceCode(r.body);
+  return /premium_membership|premiumOffer|music_premium|YouTube Premium/i.test(r.body)?item("YouTube","可访问",flag(code)):item("YouTube","未确认",flag(code));
 }
+
 
 
 async function netflix() {
-  const ids = ["80018499", "70143836"];
-  const rs = await Promise.all(ids.map(function(id) {
-    return get("https://www.netflix.com/title/" + id, false);
-  }));
-  if (rs.every(function(r) { return r.error || !r.status; }))
-    return item("Netflix", "不可访问");
-  if (rs.some(function(r) { return r.status === 403 || r.status === 451; }))
-    return item("Netflix", "受限");
-  const available = rs.some(function(r) {
-    return r.status === 200 && !/not available in your country/i.test(r.body);
-  });
-  if (available) {
-    let code = "";
-    rs.forEach(function(r) {
-      const m = r.body.match(/"countryCode"\s*:\s*"([A-Z]{2})"/i) ||
-        r.body.match(/data-country=["']([A-Z]{2})["']/i);
-      if (!code && m) code = m[1].toUpperCase();
-    });
-    return item("Netflix", "可用", flag(code));
+  const ids=["80018499","70143836"];
+  const rs=await Promise.all(ids.map(id=>get("https://www.netflix.com/title/"+id,false)));
+  if(rs.every(r=>r.error||!r.status))return item("Netflix","不可访问");
+  if(rs.some(r=>r.status===403||r.status===451))return item("Netflix","受限");
+  const available=rs.some(r=>r.status>=200&&r.status<400&&/"titleId"\\s*:\\s*"?\\d+|<title>[^<]+Netflix|application\\/ld\\+json/i.test(r.body)&&!/not available in your country|title not available/i.test(r.body));
+  if(available){
+    let code="";
+    rs.forEach(r=>{const m=r.body.match(/"countryCode"\\s*:\\s*"([A-Z]{2})"/i)||r.body.match(/data-country=["']([A-Z]{2})["']/i);if(!code&&m)code=m[1].toUpperCase();});
+    return item("Netflix","标题可访问",flag(code));
   }
-  if (rs.every(function(r) { return r.status === 404; }))
-    return item("Netflix", "测试标题不可用");
-  return item("Netflix", "未确认");
+  if(rs.every(r=>r.status===404))return item("Netflix","测试标题不可用");
+  return item("Netflix","未确认");
 }
 
+
+
 async function disney() {
-  const ua = H["User-Agent"];
-  const auth = "ZGlzbmV5JmJyb3dzZXImMS4wLjA.Cu56AgSfBTDag5NiRA81oLHkDZfu5L3CKadnefEAY84";
-  const r = await post(
-    "https://disney.api.edge.bamgrid.com/graph/v1/device/graphql",
-    {
-      query: "mutation registerDevice($input: RegisterDeviceInput!) { registerDevice(registerDevice: $input) { grant { grantType assertion } } }",
-      variables: { input: {
-        applicationRuntime: "chrome",
-        attributes: {
-          browserName: "chrome", browserVersion: "124.0",
-          manufacturer: "apple", model: null,
-          operatingSystem: "macintosh", operatingSystemVersion: "10.15.7",
-          osDeviceIds: []
-        },
-        deviceFamily: "browser", deviceLanguage: "en",
-        deviceProfile: "macosx"
-      }}
-    },
-    { Authorization: auth }
-  );
-  if (r.error || r.status !== 200) {
-    if (r.status === 403 || r.status === 451) return item("Disney+", "受限");
-    return item("Disney+", r.error || !r.status ? "不可访问" : "未确认");
+  const auth="ZGlzbmV5JmJyb3dzZXImMS4wLjA.Cu56AgSfBTDag5NiRA81oLHkDZfu5L3CKadnefEAY84";
+  const r=await post("https://disney.api.edge.bamgrid.com/graph/v1/device/graphql",{
+    query:"mutation registerDevice($input: RegisterDeviceInput!) { registerDevice(registerDevice: $input) { grant { grantType assertion } } }",
+    variables:{input:{applicationRuntime:"chrome",attributes:{browserName:"chrome",browserVersion:"124.0",manufacturer:"apple",model:null,operatingSystem:"macintosh",operatingSystemVersion:"10.15.7",osDeviceIds:[]},deviceFamily:"browser",deviceLanguage:"en",deviceProfile:"macosx"}}
+  },{Authorization:auth});
+  if(r.error||r.status!==200)return item("Disney+",r.status===403||r.status===451?"受限":r.error||!r.status?"不可访问":"未确认");
+  let data;try{data=JSON.parse(r.body);}catch(e){return item("Disney+","未确认");}
+  const sdk=data&&data.extensions&&data.extensions.sdk,session=sdk&&sdk.session;
+  const region=session&&session.location&&session.location.countryCode||"",token=sdk&&sdk.token&&sdk.token.accessToken;
+  if(session&&session.inSupportedLocation===false)return item("Disney+","受限",flag(region));
+  if(!token||!region)return item("Disney+","未确认",flag(region));
+  const q=await post("https://disney.api.edge.bamgrid.com/v1/public/graphql",{
+    query:"query($preferredLanguages: [String!]!, $version: String) {globalization(version: $version) { uiLanguage(preferredLanguages: $preferredLanguages) }}",
+    variables:{version:"1.5.0",preferredLanguages:["en"]}
+  },{Authorization:token});
+  if(!q.error&&q.status>=200&&q.status<300){
+    try{const p=JSON.parse(q.body),lang=p&&p.data&&p.data.globalization&&p.data.globalization.uiLanguage;if(typeof lang==="string"&&lang.length)return item("Disney+","可访问",flag(region));}catch(e){}
   }
-  let data;
-  try { data = JSON.parse(r.body); } catch (e) { return item("Disney+", "未确认"); }
-  const sdk = data && data.extensions && data.extensions.sdk;
-  const session = sdk && sdk.session;
-  const region = session && session.location && session.location.countryCode || "";
-  const supported = session && session.inSupportedLocation;
-  const token = sdk && sdk.token && sdk.token.accessToken;
-  if (supported === false || supported === "false") return item("Disney+", "受限", flag(region));
-  if (!token || !region) return item("Disney+", "未确认", flag(region));
-  const q = await post(
-    "https://disney.api.edge.bamgrid.com/v1/public/graphql",
-    {
-      query: "query($preferredLanguages: [String!]!, $version: String) {globalization(version: $version) { uiLanguage(preferredLanguages: $preferredLanguages) }}",
-      variables: { version: "1.5.0", preferredLanguages: ["en"] }
-    },
-    { Authorization: token }
-  );
-  if (q.status === 200 && !q.error) return item("Disney+", "可用", flag(region));
-  if (q.status === 403 || q.status === 451) return item("Disney+", "受限", flag(region));
-  return item("Disney+", "未确认", flag(region));
+  if(q.status===403||q.status===451)return item("Disney+","受限",flag(region));
+  return item("Disney+","未确认",flag(region));
 }
+
 
 
 async function spotify() {
-  const r = await get("https://www.spotify.com/api/content/v1/country-selector?platform=web&format=json", false);
-  if (r.error || !r.status) return item("Spotify", "不可访问");
-  if (r.status === 403 || r.status === 451) return item("Spotify", "受限");
-  if (r.status < 200 || r.status >= 400) return item("Spotify", "不可访问");
-  let code = "";
-  const m = r.body.match(/"countryCode"\s*:\s*"([A-Z]{2})"/i);
-  if (m) code = m[1].toUpperCase();
-  if (!code) {
-    const u = (r.url || "").match(/\/([a-z]{2})(?:-[^/]+)?\//i);
-    if (u) code = u[1].toUpperCase();
-  }
-  if (/not available in your country/i.test(r.body)) return item("Spotify", "受限", flag(code));
-  if (r.status >= 200 && r.status < 300) return item("Spotify", "可用", flag(code));
-  return item("Spotify", "未确认", flag(code));
+  const r=await get("https://www.spotify.com/api/content/v1/country-selector?platform=web&format=json",false);
+  if(r.error||!r.status)return item("Spotify","不可访问");
+  if(r.status===403||r.status===451)return item("Spotify","受限");
+  if(r.status<200||r.status>=400)return item("Spotify","不可访问");
+  let p=null,code="";try{p=JSON.parse(r.body);}catch(e){}
+  const m=r.body.match(/"countryCode"\\s*:\\s*"([A-Z]{2})"/i);if(m)code=m[1].toUpperCase();
+  if(/not available in your country/i.test(r.body))return item("Spotify","受限",flag(code));
+  const signal=!!(p&&(Array.isArray(p.countries)||Array.isArray(p.data)||(p.countryCode&&/^[A-Z]{2}$/.test(p.countryCode))));
+  return signal?item("Spotify","可访问",flag(code)):item("Spotify","未确认",flag(code));
 }
+
 
 
 async function tiktok() {
-  const r = await get("https://www.tiktok.com/cdn-cgi/trace", false);
-  let code = "";
-  if (!r.error && r.status >= 200 && r.status < 300) {
-    const m = r.body.match(/(?:^|\n)region=([A-Z]{2})(?:\n|$)/) ||
-      r.body.match(/(?:^|\n)loc=([A-Z]{2})(?:\n|$)/);
-    if (m) code = m[1];
-    if (code && ["AF","CN","IN","IR","KP"].indexOf(code) >= 0)
-      return item("TikTok", "受限", flag(code));
-    if (code) return item("TikTok", "可用", flag(code));
+  const r=await get("https://www.tiktok.com/cdn-cgi/trace",false);
+  let code="";
+  if(!r.error&&r.status>=200&&r.status<300){
+    const m=r.body.match(/(?:^|\\n)region=([A-Z]{2})(?:\\n|$)/)||r.body.match(/(?:^|\\n)loc=([A-Z]{2})(?:\\n|$)/);
+    if(m)code=m[1];
+    if(code&&["AF","CN","IN","IR","KP"].indexOf(code)>=0)return item("TikTok","受限",flag(code));
   }
-  const home = await get("https://www.tiktok.com/", false);
-  if (home.error || !home.status) return item("TikTok", "不可访问", flag(code));
-  if (home.status === 403 || home.status === 451 ||
-      /access denied|not available in your region|tiktok is not available/i.test(home.body))
-    return item("TikTok", "受限", flag(code));
-  if (home.status >= 200 && home.status < 400) return item("TikTok", "可用", flag(code));
-  return item("TikTok", "未确认", flag(code));
+  const home=await get("https://www.tiktok.com/",false);
+  if(home.error||!home.status)return item("TikTok","不可访问",flag(code));
+  if(home.status===403||home.status===451||/access denied|not available in your region|tiktok is not available/i.test(home.body))return item("TikTok","受限",flag(code));
+  if(home.status>=200&&home.status<400&&/SIGI_STATE|__UNIVERSAL_DATA_FOR_REHYDRATION__|webapp\\.tiktok/i.test(home.body))return item("TikTok","可访问",flag(code));
+  return item("TikTok","未确认",flag(code));
 }
+
 
 function visualWidth(str) {
   let n = 0;
