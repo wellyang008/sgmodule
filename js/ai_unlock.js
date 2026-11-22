@@ -139,30 +139,60 @@ async function checkYouTube() {
 }
 
 async function checkNetflix() {
-  const ids = ["81280792", "70143836"];
-  const checks = await Promise.all(ids.map(function(id) {
-    return request("https://www.netflix.com/title/" + id, { autoRedirect: false });
+  // 两个非 Netflix 原创片名用于观察地区版权差异；另用原创片名作站点连通性对照。
+  const tests = [
+    { id: "70143836", kind: "licensed" }, // Breaking Bad
+    { id: "70136120", kind: "licensed" }, // The Office
+    { id: "80057281", kind: "original" }  // Stranger Things
+  ];
+  const checks = await Promise.all(tests.map(function(item) {
+    return request("https://www.netflix.com/title/" + item.id, { autoRedirect: false });
   }));
-  if (checks.some(function(r) { return r.error || !r.status; })) {
-    return result("Netflix", "检测失败", "标题接口连接异常");
-  }
-  const statuses = checks.map(function(r) { return r.status; });
-  if (statuses[0] === 404 && statuses[1] === 404) {
-    return result("Netflix", "仅自制剧可用", "两个地区版权测试标题均不可用");
-  }
-  if (statuses[0] === 403 || statuses[0] === 451 || statuses[1] === 403 || statuses[1] === 451) {
-    return result("Netflix", "可能被地区限制", "标题接口返回 403/451");
-  }
-  if (statuses.some(function(s) { return s === 200 || s === 301 || s === 302; })) {
-    const regionCheck = await request("https://www.netflix.com/title/80018499", { autoRedirect: false });
-    const location = header(regionCheck.headers, "location");
-    const m = location.match(/\/([a-z]{2})-[a-z]{2}\//i);
-    const code = m ? m[1].toUpperCase() : "";
-    return result("Netflix", "完整片库测试通过", code ? labelRegion(code) : "地区未能提取");
-  }
-  return result("Netflix", "无法判定", "标题测试 HTTP " + statuses.join("/"));
-}
 
+  if (checks.some(function(r) { return r.error || !r.status; })) {
+    return result("Netflix", "未确认", "标题页请求异常");
+  }
+
+  let code = "";
+  const available = [];
+  const unavailable = [];
+  const restricted = [];
+
+  checks.forEach(function(r, index) {
+    const location = header(r.headers, "location");
+    const locale = location.match(/\\/([a-z]{2})-[a-z]{2}\\//i);
+    if (!code && locale) code = locale[1].toUpperCase();
+
+    const body = (r.body || "").toLowerCase();
+    const explicitlyUnavailable = /title is not available|not available to watch|isn't available in your country|not available in your region/.test(body);
+
+    if (r.status === 403 || r.status === 451) {
+      restricted.push(tests[index].kind);
+    } else if (r.status === 404 || explicitlyUnavailable) {
+      unavailable.push(tests[index].kind);
+    } else if ((r.status === 200 || r.status === 301 || r.status === 302) && !explicitlyUnavailable) {
+      available.push(tests[index].kind);
+    }
+  });
+
+  const region = code ? labelRegion(code) : "地区未知";
+  const licensedAvailable = available.indexOf("licensed") >= 0;
+  const originalAvailable = available.indexOf("original") >= 0;
+
+  if (restricted.length > 0 && !licensedAvailable && !originalAvailable) {
+    return result("Netflix", "请求受限", region + "；HTTP 403/451");
+  }
+  if (licensedAvailable) {
+    return result("Netflix", "非自制片名可访问", region + "；仅代表测试片名");
+  }
+  if (originalAvailable) {
+    return result("Netflix", "原创片名可访问", region + "；非自制片名未通过测试");
+  }
+  if (unavailable.length > 0) {
+    return result("Netflix", "测试片名未命中", region + "；不能据此断定仅有原创片");
+  }
+  return result("Netflix", "未确认", region + "；未取得有效片库信号");
+}
 async function checkSpotify() {
   const r = await request("https://www.spotify.com/api/content/v1/country-selector?platform=web&format=json", { autoRedirect: false });
   if (r.error || !r.status) return result("Spotify", "检测失败", "地区接口连接异常");
@@ -219,8 +249,13 @@ function compactStatus(item) {
     if (restricted) return "受限";
     return "未确认";
   }
-  if (/地区不支持|该地区不可用|页面提示地区不可用|可能被地区限制|可能受地区限制|可能不可用/.test(text)) return "受限";
-  if (/地区检测通过|页面特征检测通过|完整片库测试通过|地区接口检测通过|地区信号检测通过/.test(text)) return item.name === "Netflix" ? "信号通过" : "可用";
+  if (/地区不支持|该地区不可用|页面提示地区不可用|可能被地区限制|可能受地区限制|可能不可用|请求受限/.test(text)) return "受限";
+  if (item.name === "Netflix") {
+    if (/非自制片名可访问/.test(text)) return "版权片可用";
+    if (/原创片名可访问/.test(text)) return "原创可用";
+    return "未确认";
+  }
+  if (/地区检测通过|页面特征检测通过|地区接口检测通过|地区信号检测通过/.test(text)) return "可用";
   return "未确认";
 }
 
@@ -246,7 +281,7 @@ async function main() {
 
   const rows = values.map(function(item) {
     const name = item.name === "YouTube Premium" ? "YouTube" : item.name;
-    return name.padEnd(12, " ") + compactStatus(item).padEnd(10, " ") + compactRegion(item);
+    return name.padEnd(12, " ") + "| " + compactStatus(item).padEnd(10, " ") + "| " + compactRegion(item);
   });
 
   const uncertain = values.filter(function(item) {
