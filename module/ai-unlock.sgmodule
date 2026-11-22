@@ -6,4 +6,4 @@
 Unlock-Check = script-name=unlock-check,update-interval=1800
 
 [Script]
-unlock-check = type=generic,timeout=20,script-path=https://your-host.example.com/unlock-check.js
+unlock-check = type=generic,timeout=20,script-path=https://raw.githubusercontent.com/wellyang008/sgmodule/main/js/ai_unlock.js
