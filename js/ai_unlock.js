@@ -1,73 +1,71 @@
-// Surge AI / Media checker
-// Conservative policy: distinguish endpoint reachability from account entitlement and playback.
-const H = {
-  "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/124 Safari/537.36",
+// AI / Media availability checker for Surge
+// Results distinguish service access, regional restrictions and playback evidence.
+// Anonymous checks cannot prove account entitlement or DRM playback.
+
+const UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Version/17.0 Mobile/15E148 Safari/604.1";
+const HEADERS = {
+  "User-Agent": UA,
   "Accept-Language": "en-US,en;q=0.9"
 };
 
-function get(url, redirect) {
+function request(method, url, body, headers, redirect, timeout) {
   return new Promise(function(resolve) {
-    $httpClient.get({
-      url: url, headers: H, timeout: 15,
-      "auto-redirect": redirect !== false
-    }, function(err, res, body) {
-      resolve({
-        error: !!err, status: res ? Number(res.status) : 0,
-        headers: res && res.headers ? res.headers : {},
-        url: res && res.url ? res.url : url,
-        body: typeof body === "string" ? body : ""
-      });
-    });
-  });
-}
-
-function post(url, body, headers) {
-  return new Promise(function(resolve) {
-    $httpClient.post({
+    const opts = {
       url: url,
-      headers: Object.assign({
-        "User-Agent": H["User-Agent"],
-        "Accept-Language": "en-US,en;q=0.9",
-        "Content-Type": "application/json"
-      }, headers || {}),
-      body: JSON.stringify(body), timeout: 18
-    }, function(err, res, data) {
+      headers: Object.assign({}, HEADERS, headers || {}),
+      timeout: timeout || 18,
+      "auto-redirect": redirect !== false
+    };
+    if (body !== undefined && body !== null) {
+      opts.body = typeof body === "string" ? body : JSON.stringify(body);
+    }
+    const done = function(err, res, data) {
       resolve({
-        error: !!err, status: res ? Number(res.status) : 0,
+        error: !!err,
+        status: res ? Number(res.status) : 0,
         headers: res && res.headers ? res.headers : {},
-        body: typeof data === "string" ? data : ""
+        body: typeof data === "string" ? data : "",
+        url: res && res.url ? res.url : url
       });
-    });
+    };
+    if (method === "POST") $httpClient.post(opts, done);
+    else $httpClient.get(opts, done);
   });
 }
-
-function traceCode(body) {
-  const m = String(body || "").match(/(?:^|\n)loc=([A-Z]{2})(?:\n|$)/);
+function get(url, redirect, headers) {
+  return request("GET", url, null, headers, redirect, 18);
+}
+function post(url, body, headers) {
+  return request("POST", url, body, Object.assign({"Content-Type":"application/json"}, headers || {}), true, 20);
+}
+function json(text) {
+  try { return JSON.parse(text); } catch (e) { return null; }
+}
+function header(headers, name) {
+  if (!headers) return "";
+  const key = Object.keys(headers).find(function(k) { return k.toLowerCase() === name.toLowerCase(); });
+  return key ? String(headers[key] || "") : "";
+}
+function countryFromText(text) {
+  const m = String(text || "").match(/(?:^|\n)loc=([A-Z]{2})(?:\n|$)/);
   return m ? m[1] : "";
 }
-function flag(code) {
-  return /^[A-Z]{2}$/.test(code || "")
-    ? String.fromCodePoint(127397 + code.charCodeAt(0), 127397 + code.charCodeAt(1)) + " " + code
-    : "未知";
+function countryFlag(code) {
+  if (!/^[A-Z]{2}$/.test(code || "")) return "未知";
+  return String.fromCodePoint(127397 + code.charCodeAt(0), 127397 + code.charCodeAt(1)) + " " + code;
 }
-function item(name, status, region) {
-  return { name: name, status: status, region: region || "未知" };
+function result(name, status, region) {
+  return {name:name, status:status, region:region || "未知"};
 }
-function blocked(r) {
+function isBlocked(r) {
   return !!r && (r.status === 403 || r.status === 451 ||
-    /unsupported[_ ]country|not available in your (country|region)|isn't supported in your country|app unavailable in your region|access denied/i.test(r.body || ""));
+    /unsupported[_ ]country|not available in your (country|region)|not available in your location|service is not available in your region|this service is unavailable in your region|country is not supported|地域.*不支持|所在国家或地区.*不可用/i.test(r.body || ""));
 }
-function reachable(r) {
+function isReachable(r) {
   return !!r && !r.error && r.status >= 200 && r.status < 400;
 }
-function trace(host) {
-  return get("https://" + host + "/cdn-cgi/trace", false);
-}
-function parseJSON(s) {
-  try { return JSON.parse(s); } catch (e) { return null; }
-}
-function extractObjectAfter(source, marker) {
-  const start = source.indexOf(marker);
+function extractObject(source, marker) {
+  const start = String(source || "").indexOf(marker);
   if (start < 0) return null;
   const open = source.indexOf("{", start + marker.length);
   if (open < 0) return null;
@@ -78,183 +76,198 @@ function extractObjectAfter(source, marker) {
       if (escaped) escaped = false;
       else if (ch === "\\") escaped = true;
       else if (ch === '"') quoted = false;
-      continue;
-    }
-    if (ch === '"') quoted = true;
+    } else if (ch === '"') quoted = true;
     else if (ch === "{") depth++;
-    else if (ch === "}" && --depth === 0) return parseJSON(source.slice(open, i + 1));
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) return json(source.slice(open, i + 1));
+    }
   }
   return null;
 }
+async function trace(host) {
+  return get("https://" + host + "/cdn-cgi/trace", false);
+}
+async function regionFor(host) {
+  const r = await trace(host);
+  return countryFromText(r.body);
+}
 
+// AI checks: verifies the actual product entry point and explicit regional blocks.
+// It does not claim that an unauthenticated account can send prompts.
+async function aiCheck(name, host, url, markers) {
+  const pair = await Promise.all([get(url, false), regionFor(host)]);
+  const r = pair[0], country = pair[1];
+  const region = countryFlag(country);
+  if (isBlocked(r)) return result(name, "地区受限", region);
+  if (r.error || !r.status) return result(name, "不可访问", region);
+  if (r.status === 429) return result(name, "请求受限", region);
+  if (!isReachable(r)) return result(name, "未确认", region);
+  const body = r.body || "";
+  if (markers.some(function(x) { return x.test(body); })) {
+    return result(name, "入口可用", region);
+  }
+  return result(name, "未确认", region);
+}
 async function claude() {
-  const rs = await Promise.all([trace("claude.ai"), get("https://claude.ai/", false)]);
-  const region = flag(traceCode(rs[0].body)), home = rs[1];
-  if (blocked(home)) return item("Claude", "受限", region);
-  if (!reachable(home)) return item("Claude", home.error || !home.status ? "不可访问" : "未确认", region);
-  // Only confirms the public web app shell, not sign-in, account access or message generation.
-  if (/claude\.ai|anthropic|sign in to claude/i.test(home.body)) return item("Claude", "网站可达", region);
-  return item("Claude", "未确认", region);
+  return aiCheck("Claude", "claude.ai", "https://claude.ai/", [/claude\.ai|anthropic|claude/i]);
 }
-
 async function gemini() {
-  const rs = await Promise.all([trace("gemini.google.com"), get("https://gemini.google.com/", false)]);
-  const region = flag(traceCode(rs[0].body)), r = rs[1];
-  if (blocked(r)) return item("Gemini", "受限", region);
-  if (!reachable(r)) return item("Gemini", r.error || !r.status ? "不可访问" : "未确认", region);
-  if (/gemini\.google\.com|bard|batchexecute/i.test(r.body)) return item("Gemini", "网站可达", region);
-  return item("Gemini", "未确认", region);
+  return aiCheck("Gemini", "gemini.google.com", "https://gemini.google.com/", [/gemini|bard|batchexecute/i]);
+}
+async function openai() {
+  const pair = await Promise.all([
+    get("https://chatgpt.com/", false),
+    regionFor("chatgpt.com")
+  ]);
+  const r = pair[0], country = pair[1], region = countryFlag(country);
+  const supported = [
+    "AL","DZ","AD","AO","AG","AR","AM","AU","AT","AZ","BS","BD","BB","BE","BZ","BJ","BT","BA","BW","BR","BG","BF","CV","CA","CL","CO","KM","CR","HR","CY","CZ","DK","DJ","DM","DO","EC","SV","EE","FJ","FI","FR","GA","GM","GE","DE","GH","GR","GD","GT","GN","GW","GY","HT","HN","HU","IS","IN","ID","IQ","IE","IL","IT","JM","JP","JO","KZ","KE","KI","KW","KG","LV","LB","LS","LR","LI","LT","LU","MG","MW","MY","MV","ML","MT","MH","MR","MU","MX","MC","MN","ME","MA","MZ","MM","NA","NR","NP","NL","NZ","NI","NE","NG","MK","NO","OM","PK","PW","PA","PG","PE","PH","PL","PT","QA","RO","RW","KN","LC","VC","WS","SM","ST","SN","RS","SC","SL","SG","SK","SI","SB","ZA","ES","LK","SR","SE","CH","TH","TG","TO","TT","TN","TR","TV","UG","AE","US","UY","VU","ZM","BO","BN","CG","VA","FM","MD","PS","KR","TW","TZ","TL","GB"
+  ];
+  if (isBlocked(r)) return result("OpenAI", "地区受限", region);
+  if (r.error || !r.status) return result("OpenAI", "不可访问", region);
+  if (r.status === 429) return result("OpenAI", "请求受限", region);
+  if (!isReachable(r) || !/chatgpt|openai/i.test(r.body)) return result("OpenAI", "未确认", region);
+  if (country && supported.indexOf(country) < 0) return result("OpenAI", "地区不支持", region);
+  return result("OpenAI", country ? "入口可用" : "入口可用" , region);
 }
 
-async function openai() {
-  const rs = await Promise.all([
-    get("https://chat.openai.com/", false),
-    trace("chat.openai.com"),
-    get("https://ios.chat.openai.com/", false)
-  ]);
-  const home = rs[0], regionCode = traceCode(rs[1].body), ios = rs[2];
-  const supported = ["T1","XX","AL","DZ","AD","AO","AG","AR","AM","AU","AT","AZ","BS","BD","BB","BE","BZ","BJ","BT","BA","BW","BR","BG","BF","CV","CA","CL","CO","KM","CR","HR","CY","DK","DJ","DM","DO","EC","SV","EE","FJ","FI","FR","GA","GM","GE","DE","GH","GR","GD","GT","GN","GW","GY","HT","HN","HU","IS","IN","ID","IQ","IE","IL","IT","JM","JP","JO","KZ","KE","KI","KW","KG","LV","LB","LS","LR","LI","LT","LU","MG","MW","MY","MV","ML","MT","MH","MR","MU","MX","MC","MN","ME","MA","MZ","MM","NA","NR","NP","NL","NZ","NI","NE","NG","MK","NO","OM","PK","PW","PA","PG","PE","PH","PL","PT","QA","RO","RW","KN","LC","VC","WS","SM","ST","SN","RS","SC","SL","SG","SK","SI","SB","ZA","ES","LK","SR","SE","CH","TH","TG","TO","TT","TN","TR","TV","UG","AE","US","UY","VU","ZM","BO","BN","CG","CZ","VA","FM","MD","PS","KR","TW","TZ","TL","GB"];
-  const contentType = headerValue(home.headers, "content-type").toLowerCase();
-  const iosOK = reachable(ios) && /chatgpt|openai/i.test(ios.body);
-  if (blocked(home)) return item("OpenAI", "受限", flag(regionCode));
-  if (home.error || !home.status) return item("OpenAI", iosOK ? "部分可达" : "不可访问", flag(regionCode));
-  if (contentType.indexOf("text/plain") >= 0) return item("OpenAI", "受限", flag(regionCode));
-  if (regionCode && supported.indexOf(regionCode) >= 0) {
-    return item("OpenAI", iosOK ? "地区支持" : "Web地区支持", flag(regionCode));
-  }
-  if (regionCode) return item("OpenAI", "地区不支持", flag(regionCode));
-  return item("OpenAI", iosOK ? "部分可达" : "未确认", "未知");
-}
+// YouTube: inspect the player response for a real test video, not the homepage.
 async function youtube() {
-  const rs = await Promise.all([
-    trace("www.youtube.com"),
-    get("https://www.youtube.com/premium", false)
+  const pair = await Promise.all([
+    get("https://www.youtube.com/watch?v=jNQXAC9IVRw&hl=en", false),
+    regionFor("www.youtube.com")
   ]);
-  const regionCode = traceCode(rs[0].body), r = rs[1];
-  if (r.error || !r.status) return item("YouTube", "不可访问", flag(regionCode));
-  if (r.status === 403 || r.status === 451 ||
-      /premium is not available in your country|premium is not available in your region/i.test(r.body)) {
-    return item("YouTube", "Premium不支持", flag(regionCode));
+  const r = pair[0], country = pair[1], region = countryFlag(country);
+  if (isBlocked(r) || /sorry\/index|video unavailable in your country|not available in your country/i.test(r.body)) {
+    return result("YouTube", "地区受限", region);
   }
-  if (r.status !== 200) return item("YouTube", "未确认", flag(regionCode));
-  const m = r.body.match(/"GL"\s*:\s*"([A-Z]{2})"/);
-  const code = m ? m[1] : regionCode;
-  if (!code) return item("YouTube", "Premium页面可达", "未知");
-  return item("YouTube", "Premium地区支持", flag(code));
-}
-function headerValue(headers, key) {
-  if (!headers) return "";
-  const target = key.toLowerCase();
-  const names = Object.keys(headers);
-  for (let i = 0; i < names.length; i++) {
-    if (names[i].toLowerCase() === target) return String(headers[names[i]] || "");
+  if (r.error || !r.status) return result("YouTube", "不可访问", region);
+  const p = extractObject(r.body, "ytInitialPlayerResponse");
+  const ps = p && p.playabilityStatus;
+  if (ps && ps.status === "OK" && p.streamingData &&
+      ((p.streamingData.formats && p.streamingData.formats.length) ||
+       (p.streamingData.adaptiveFormats && p.streamingData.adaptiveFormats.length) ||
+       p.streamingData.hlsManifestUrl || p.streamingData.dashManifestUrl)) {
+    return result("YouTube", "测试视频可播放", region);
   }
-  return "";
+  if (ps && /AGE|LOGIN|PRIVATE|UNAVAILABLE|GEO|COUNTRY|REGION/i.test(String(ps.status) + " " + String(ps.reason || ""))) {
+    return result("YouTube", "播放受限", region);
+  }
+  return result("YouTube", "未确认", region);
 }
+
+// Netflix: title metadata is a content/catalog check. Playback requires a signed-in
+// session and DRM license, so this script never labels a title as actually playing.
 async function netflix() {
-  // Fixed title probe, HTTP status and X-Originating-URL region.
-  const r = await get("https://www.netflix.com/title/81280792", false);
-  if (r.error || !r.status) return item("Netflix", "不可访问");
-  if (r.status === 403 || r.status === 451) return item("Netflix", "地区受限");
-  if (r.status === 404) return item("Netflix", "仅自制剧");
-  if (r.status !== 200) return item("Netflix", "未确认");
-  const origin = headerValue(r.headers, "x-originating-url");
-  let code = "";
-  if (origin) {
-    const path = origin.replace(/^https?:\/\/[^/]+/i, "");
-    const parts = path.split("/").filter(Boolean);
-    const candidate = parts.find(function(x) { return /^[a-z]{2}(-[a-z]{2})?$/i.test(x); });
-    if (candidate) code = candidate.slice(0, 2).toUpperCase();
-  }
-  return item("Netflix", "目录接口支持", flag(code));
+  const ids = ["81280792", "80018499"];
+  const pair = await Promise.all([
+    Promise.all(ids.map(function(id) { return get("https://www.netflix.com/title/" + id, false); })),
+    regionFor("www.netflix.com")
+  ]);
+  const rs = pair[0], region = countryFlag(pair[1]);
+  if (rs.every(function(r) { return r.error || !r.status; })) return result("Netflix", "不可访问", region);
+  if (rs.every(isBlocked)) return result("Netflix", "地区受限", region);
+  let visible = 0;
+  rs.forEach(function(r, i) {
+    if (isReachable(r) && (r.body.indexOf(ids[i]) >= 0 || /netflix/i.test(r.body))) visible++;
+  });
+  if (visible === ids.length) return result("Netflix", "测试内容可访问", region);
+  if (visible > 0) return result("Netflix", "部分内容可访问", region);
+  if (rs.some(function(r) { return r.status === 404; })) return result("Netflix", "内容可能受限", region);
+  return result("Netflix", "未确认", region);
 }
+
+// Disney+: use its device registration response to determine supported location.
+// This is a region-support signal, not proof of account playback entitlement.
 async function disney() {
-  // Device registration response exposes Disney+'s supported-location decision.
-  const auth = "ZGlzbmV5JmJyb3dzZXImMS4wLjA.Cu56AgSfBTDag5NiRA81oLHkDZfu5L3CKadnefEAY84";
+  const auth = "disney&browser&1.0.0";
   const r = await post("https://disney.api.edge.bamgrid.com/graph/v1/device/graphql", {
     query: "mutation registerDevice($input: RegisterDeviceInput!) { registerDevice(registerDevice: $input) { grant { grantType assertion } } }",
-    variables: { input: {
-      applicationRuntime: "chrome",
-      attributes: { browserName: "chrome", browserVersion: "94.0.4606", manufacturer: "microsoft", model: null, operatingSystem: "windows", operatingSystemVersion: "10.0", osDeviceIds: [] },
-      deviceFamily: "browser", deviceLanguage: "en", deviceProfile: "windows"
+    variables: {input:{
+      applicationRuntime:"chrome",
+      attributes:{browserName:"chrome",browserVersion:"120.0",manufacturer:"apple",model:null,operatingSystem:"macintosh",operatingSystemVersion:"10.15.7",osDeviceIds:[]},
+      deviceFamily:"browser",deviceLanguage:"en",deviceProfile:"macosx"
     }}
-  }, { Authorization: auth });
-  if (r.error || !r.status) return item("Disney+", "不可访问");
-  if (r.status !== 200) return item("Disney+", r.status === 403 || r.status === 451 ? "受限" : "未确认");
-  const data = parseJSON(r.body);
+  }, {Authorization:auth});
+  if (isBlocked(r)) return result("Disney+", "地区受限");
+  if (r.error || !r.status) return result("Disney+", "不可访问");
+  if (r.status !== 200) return result("Disney+", "未确认");
+  const data = json(r.body);
   const session = data && data.extensions && data.extensions.sdk && data.extensions.sdk.session;
-  if (!session) return item("Disney+", "未确认");
-  const region = session.location && session.location.countryCode || "";
-  if (session.inSupportedLocation === false) return item("Disney+", "地区不支持", flag(region));
-  if (session.inSupportedLocation === true) return item("Disney+", "地区支持", flag(region));
-  return item("Disney+", "未确认", flag(region));
-}
-async function spotify() {
-  const rs = await Promise.all([
-    trace("www.spotify.com"),
-    get("https://www.spotify.com/", false)
-  ]);
-  const region = flag(traceCode(rs[0].body)), r = rs[1];
-  if (blocked(r)) return item("Spotify", "受限", region);
-  if (!reachable(r)) return item("Spotify", r.error || !r.status ? "不可访问" : "未确认", region);
-  if (/spotify\.com|spotify/i.test(r.body)) return item("Spotify", "网站可达", region);
-  return item("Spotify", "未确认", region);
+  if (!session) return result("Disney+", "未确认");
+  const country = session.location && session.location.countryCode || "";
+  if (session.inSupportedLocation === false) return result("Disney+", "地区不支持", countryFlag(country));
+  if (session.inSupportedLocation === true) return result("Disney+", "地区支持", countryFlag(country));
+  return result("Disney+", "未确认", countryFlag(country));
 }
 
+// TikTok: test a known public video page, not only the landing page.
 async function tiktok() {
-  const rs = await Promise.all([
-    trace("www.tiktok.com"),
-    get("https://www.tiktok.com/", false)
+  const pair = await Promise.all([
+    get("https://www.tiktok.com/@scout2015/video/6718335390845095173", false),
+    regionFor("www.tiktok.com")
   ]);
-  const region = flag(traceCode(rs[0].body)), r = rs[1];
-  if (blocked(r) || /tiktok is not available in your region/i.test(r.body)) return item("TikTok", "受限", region);
-  if (!reachable(r)) return item("TikTok", r.error || !r.status ? "不可访问" : "未确认", region);
-  if (/SIGI_STATE|__UNIVERSAL_DATA_FOR_REHYDRATION__|webapp\.tiktok/i.test(r.body)) return item("TikTok", "网站可达", region);
-  return item("TikTok", "未确认", region);
+  const r = pair[0], region = countryFlag(pair[1]);
+  if (isBlocked(r) || /not available in your region|unavailable in your region/i.test(r.body)) {
+    return result("TikTok", "地区受限", region);
+  }
+  if (r.error || !r.status) return result("TikTok", "不可访问", region);
+  if (isReachable(r) && /SIGI_STATE|__UNIVERSAL_DATA_FOR_REHYDRATION__|video\/6718335390845095173/i.test(r.body)) {
+    return result("TikTok", "测试视频页可访问", region);
+  }
+  return result("TikTok", "未确认", region);
 }
 
-function visualWidth(str) {
+// Spotify is an audio service. Check a fixed public track page and report it as audio,
+// not as video playback.
+async function spotify() {
+  const pair = await Promise.all([
+    get("https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC", false),
+    regionFor("open.spotify.com")
+  ]);
+  const r = pair[0], region = countryFlag(pair[1]);
+  if (isBlocked(r)) return result("Spotify", "地区受限", region);
+  if (r.error || !r.status) return result("Spotify", "不可访问", region);
+  if (isReachable(r) && /spotify|4uLU6hMCjMI75M1A2tKUQC/i.test(r.body)) {
+    return result("Spotify", "曲目页可访问", region);
+  }
+  return result("Spotify", "未确认", region);
+}
+
+function visualWidth(s) {
   let n = 0;
-  Array.from(String(str)).forEach(function(ch) {
+  Array.from(String(s)).forEach(function(ch) {
     const cp = ch.codePointAt(0);
     n += (cp >= 0x2E80 || cp >= 0xF900 || cp >= 0x1F000) ? 2 : 1;
   });
   return n;
 }
-function padCell(str, width) {
-  const gap = Math.max(0, width - visualWidth(str));
-  return str + "　".repeat(Math.floor(gap / 2)) + (gap % 2 ? " " : "");
+function padCell(s, width) {
+  const gap = Math.max(0, width - visualWidth(s));
+  return s + "　".repeat(Math.floor(gap / 2)) + (gap % 2 ? " " : "");
 }
 async function main() {
-  const results = await Promise.all([
-    claude(), gemini(), openai(), youtube(), netflix(), disney(), spotify(), tiktok()
+  const checks = await Promise.all([
+    claude(), gemini(), openai(), youtube(), netflix(), disney(), tiktok(), spotify()
   ]);
-  const serviceWidth = 9, statusWidth = 16;
-  const lines = results.map(function(x) {
-    return padCell(x.name, serviceWidth) + "　" +
-      padCell(x.status, statusWidth) + "　" + x.region;
+  const serviceWidth = 9, statusWidth = 18;
+  const header = padCell("服务", serviceWidth) + "　" + padCell("状态", statusWidth) + "　地区";
+  const lines = checks.map(function(x) {
+    return padCell(x.name, serviceWidth) + "　" + padCell(x.status, statusWidth) + "　" + x.region;
   });
-  const header = padCell("服务", serviceWidth) + "　" +
-    padCell("状态", statusWidth) + "　地区";
   const d = new Date();
-  const time = ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2);
-  const uncertain = results.some(function(x) {
-    return /未确认|部分|不可用/.test(x.status);
-  });
+  const time = ("0"+d.getHours()).slice(-2) + ":" + ("0"+d.getMinutes()).slice(-2);
+  const hasIssue = checks.some(function(x) { return /受限|不可访问|未确认|部分/.test(x.status); });
   $done({
-    title: "AI / 海外媒体检测",
-    content: header + "\n" + lines.join("\n") +
+    title:"AI / 海外媒体检测",
+    content:header + "\n" + lines.join("\n") +
       "\n\n检测时间：" + time +
-      "\n说明：地区支持和目录接口可用不等于实际视频播放成功；未登录账号，不能验证订阅、账号权限及 DRM 播放。",
-    icon: uncertain ? "exclamationmark.triangle" : "checkmark.circle",
-    "icon-color": uncertain ? "#FF9500" : "#34C759"
+      "\n说明：YouTube检测测试视频播放接口；Netflix、Disney+及TikTok检测内容或地区接口，登录、DRM及实际播放仍受账号和设备影响。AI检测服务入口，不代表已登录账号可成功对话。Spotify为音乐服务。",
+    icon:hasIssue ? "exclamationmark.triangle" : "checkmark.circle",
+    "icon-color":hasIssue ? "#FF9500" : "#34C759"
   });
 }
 main().catch(function(e) {
-  $done({
-    title: "AI / 海外媒体检测",
-    content: "检测异常：" + String(e),
-    icon: "exclamationmark.triangle",
-    "icon-color": "#FF3B30"
-  });
+  $done({title:"AI / 海外媒体检测",content:"检测异常：" + String(e),icon:"exclamationmark.triangle","icon-color":"#FF3B30"});
 });
