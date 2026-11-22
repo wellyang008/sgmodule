@@ -1,10 +1,10 @@
 #!name = 流媒体与 AI 解锁检测
-#!desc = 检测出口地区、Gemini 与 Netflix 解锁状态，每 30 分钟刷新一次
+#!desc = 手动检测出口地区、Gemini 与 Netflix 解锁状态
 #!author = wellyang008
 #!homepage = https://github.com/wellyang008/sgmodule
 
 [Script]
-ai_unlock_cron = type=cron,cronexp="*/30 * * * *",wake-system=1,script-path=https://raw.githubusercontent.com/wellyang008/sgmodule/main/js/ai_unlock.js,timeout=30
+ai_unlock_script = type=generic,script-path=https://raw.githubusercontent.com/wellyang008/sgmodule/main/js/ai_unlock.js,timeout=30
 
 [Panel]
-ai_unlock_panel = script-name=ai_unlock_cron,update-interval=1800
+ai_unlock_panel = script-name=ai_unlock_script
