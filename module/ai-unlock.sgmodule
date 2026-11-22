@@ -1,5 +1,5 @@
 #!name = 流媒体与 AI 解锁检测
-#!desc = 检测出口地区、Gemini 与 Netflix 解锁状态
+#!desc = 检测 ChatGPT、Claude、Gemini、YouTube Premium、Netflix 解锁状态与出口地区
 #!author = wellyang008
 #!homepage = https://github.com/wellyang008/sgmodule
 
