@@ -88,9 +88,16 @@ function extractObject(source, marker) {
 async function trace(host) {
   return get("https://" + host + "/cdn-cgi/trace", false);
 }
+let regionPromise = null;
 async function regionFor(host) {
-  const r = await trace(host);
-  return countryFromText(r.body);
+  // Use one known Cloudflare endpoint for the actual Surge egress region.
+  // Third-party service domains do not necessarily expose Cloudflare Trace.
+  if (!regionPromise) {
+    regionPromise = trace("www.cloudflare.com").then(function(r) {
+      return countryFromText(r.body);
+    }).catch(function() { return ""; });
+  }
+  return regionPromise;
 }
 
 // AI checks: verifies the actual product entry point and explicit regional blocks.
@@ -104,6 +111,10 @@ async function aiCheck(name, host, url, markers) {
   if (r.status === 429) return result(name, "请求受限", region);
   if (!isReachable(r)) return result(name, "未确认", region);
   const body = r.body || "";
+  const matched = Array.isArray(markers) && markers.some(function(pattern) {
+    return pattern.test(body);
+  });
+  if (!matched) return result(name, "未确认", region);
   return result(name, "已解锁", region);
 }
 async function claude() {
@@ -142,11 +153,9 @@ async function youtube() {
   if (r.error || !r.status) return result("YouTube", "不可访问", region);
   const p = extractObject(r.body, "ytInitialPlayerResponse");
   const ps = p && p.playabilityStatus;
-  if (ps && ps.status === "OK" && p.streamingData &&
-      ((p.streamingData.formats && p.streamingData.formats.length) ||
-       (p.streamingData.adaptiveFormats && p.streamingData.adaptiveFormats.length) ||
-       p.streamingData.hlsManifestUrl || p.streamingData.dashManifestUrl)) {
-    return result("YouTube", "测试视频可播放", region);
+  if (ps && ps.status === "OK" && p.videoDetails &&
+      p.videoDetails.videoId === "jNQXAC9IVRw") {
+    return result("YouTube", "已解锁", region);
   }
   if (ps && /AGE|LOGIN|PRIVATE|UNAVAILABLE|GEO|COUNTRY|REGION/i.test(String(ps.status) + " " + String(ps.reason || ""))) {
     return result("YouTube", "播放受限", region);
@@ -192,8 +201,10 @@ async function disney() {
   }
   if (r.error || !r.status) return result("Disney+", "不可访问", region);
   if (r.status === 429) return result("Disney+", "请求受限", region);
+  // The public landing page only proves site reachability, not catalog access
+  // or playback authorization. Never promote this signal to "unlocked".
   if (isReachable(r) && /disney|bamgrid/i.test(r.body)) {
-    return result("Disney+", "已解锁", region);
+    return result("Disney+", "未确认", region);
   }
   return result("Disney+", "未确认", region);
 }
@@ -259,7 +270,7 @@ async function main() {
     title:"AI / 海外媒体检测",
     content:header + "\n" + lines.join("\n") +
       "\n\n检测时间：" + time +
-      "\n说明：已解锁表示专用检测通过；Netflix用自制剧和授权剧两部影片区分片库。AI检测服务入口，不代表账号权限；Spotify为音乐服务。",
+      "\n说明：地区取自同一出口的 Cloudflare Trace。YouTube 已解锁表示测试视频播放器返回 OK；Netflix 按自制剧和授权剧样本判断，不代表全片库；Disney+ 仅凭官网不能确认播放。AI 入口通过不代表账号权限；Spotify 为音乐服务。",
     icon:hasIssue ? "exclamationmark.triangle" : "checkmark.circle",
     "icon-color":hasIssue ? "#FF9500" : "#34C759"
   });
