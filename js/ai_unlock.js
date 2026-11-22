@@ -93,7 +93,7 @@ async function claude() {
   if (blocked(home)) return item("Claude", "受限", region);
   if (!reachable(home)) return item("Claude", home.error || !home.status ? "不可访问" : "未确认", region);
   // Only confirms the public web app shell, not sign-in, account access or message generation.
-  if (/claude\.ai|anthropic|sign in to claude/i.test(home.body)) return item("Claude", "可访问", region);
+  if (/claude\.ai|anthropic|sign in to claude/i.test(home.body)) return item("Claude", "网站可达", region);
   return item("Claude", "未确认", region);
 }
 
@@ -102,7 +102,7 @@ async function gemini() {
   const region = flag(traceCode(rs[0].body)), r = rs[1];
   if (blocked(r)) return item("Gemini", "受限", region);
   if (!reachable(r)) return item("Gemini", r.error || !r.status ? "不可访问" : "未确认", region);
-  if (/gemini\.google\.com|bard|batchexecute/i.test(r.body)) return item("Gemini", "可访问", region);
+  if (/gemini\.google\.com|bard|batchexecute/i.test(r.body)) return item("Gemini", "网站可达", region);
   return item("Gemini", "未确认", region);
 }
 
@@ -221,7 +221,7 @@ async function spotify() {
   const region = flag(traceCode(rs[0].body)), r = rs[1];
   if (blocked(r)) return item("Spotify", "受限", region);
   if (!reachable(r)) return item("Spotify", r.error || !r.status ? "不可访问" : "未确认", region);
-  if (/spotify\.com|spotify/i.test(r.body)) return item("Spotify", "可访问", region);
+  if (/spotify\.com|spotify/i.test(r.body)) return item("Spotify", "网站可达", region);
   return item("Spotify", "未确认", region);
 }
 
@@ -233,7 +233,7 @@ async function tiktok() {
   const region = flag(traceCode(rs[0].body)), r = rs[1];
   if (blocked(r) || /tiktok is not available in your region/i.test(r.body)) return item("TikTok", "受限", region);
   if (!reachable(r)) return item("TikTok", r.error || !r.status ? "不可访问" : "未确认", region);
-  if (/SIGI_STATE|__UNIVERSAL_DATA_FOR_REHYDRATION__|webapp\.tiktok/i.test(r.body)) return item("TikTok", "可访问", region);
+  if (/SIGI_STATE|__UNIVERSAL_DATA_FOR_REHYDRATION__|webapp\.tiktok/i.test(r.body)) return item("TikTok", "网站可达", region);
   return item("TikTok", "未确认", region);
 }
 
