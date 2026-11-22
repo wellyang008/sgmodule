@@ -181,27 +181,21 @@ async function netflix() {
 // Disney+: use its device registration response to determine supported location.
 // This is a region-support signal, not proof of account playback entitlement.
 async function disney() {
-  const auth = "disney&browser&1.0.0";
-  const r = await post("https://disney.api.edge.bamgrid.com/graph/v1/device/graphql", {
-    query: "mutation registerDevice($input: RegisterDeviceInput!) { registerDevice(registerDevice: $input) { grant { grantType assertion } } }",
-    variables: {input:{
-      applicationRuntime:"chrome",
-      attributes:{browserName:"chrome",browserVersion:"120.0",manufacturer:"apple",model:null,operatingSystem:"macintosh",operatingSystemVersion:"10.15.7",osDeviceIds:[]},
-      deviceFamily:"browser",deviceLanguage:"en",deviceProfile:"macosx"
-    }}
-  }, {Authorization:auth});
-  if (isBlocked(r)) return result("Disney+", "地区受限");
-  if (r.error || !r.status) return result("Disney+", "不可访问");
-  if (r.status !== 200) return result("Disney+", "未确认");
-  const data = json(r.body);
-  const session = data && data.extensions && data.extensions.sdk && data.extensions.sdk.session;
-  if (!session) return result("Disney+", "未确认");
-  const country = session.location && session.location.countryCode || "";
-  if (session.inSupportedLocation === false) return result("Disney+", "地区不支持", countryFlag(country));
-  if (session.inSupportedLocation === true) return result("Disney+", "地区支持", countryFlag(country));
-  return result("Disney+", "未确认", countryFlag(country));
+  const pair = await Promise.all([
+    get("https://www.disneyplus.com/", false),
+    regionFor("www.disneyplus.com")
+  ]);
+  const r = pair[0], region = countryFlag(pair[1]);
+  if (isBlocked(r) || /not available in your region|unsupported location/i.test(r.body)) {
+    return result("Disney+", "地区受限", region);
+  }
+  if (r.error || !r.status) return result("Disney+", "不可访问", region);
+  if (r.status === 429) return result("Disney+", "请求受限", region);
+  if (isReachable(r) && /disney|bamgrid/i.test(r.body)) {
+    return result("Disney+", "入口可用", region);
+  }
+  return result("Disney+", "未确认", region);
 }
-
 // TikTok: test a known public video page, not only the landing page.
 async function tiktok() {
   const pair = await Promise.all([
