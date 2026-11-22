@@ -7,9 +7,7 @@ const H = {
 function get(url, redirect) {
   return new Promise(function(resolve) {
     $httpClient.get({
-      url: url,
-      headers: H,
-      timeout: 12,
+      url: url, headers: H, timeout: 12,
       "auto-redirect": redirect !== false
     }, function(err, res, body) {
       resolve({
@@ -22,17 +20,8 @@ function get(url, redirect) {
   });
 }
 
-function head(headers, key) {
-  const target = key.toLowerCase();
-  const keys = Object.keys(headers || {});
-  for (let i = 0; i < keys.length; i++) {
-    if (keys[i].toLowerCase() === target) return String(headers[keys[i]]);
-  }
-  return "";
-}
-
 function traceCode(body) {
-  const m = String(body || "").match(/(?:^|\n)loc=([A-Z]{2})(?:\n|$)/);
+  const m = String(body || "").match(/(?:^|\\n)loc=([A-Z]{2})(?:\\n|$)/);
   return m ? m[1] : "";
 }
 
@@ -46,21 +35,25 @@ function item(name, status, region) {
   return { name: name, status: status, region: region || "未知" };
 }
 
+function restricted(code) {
+  return ["AF","BY","CN","CU","HK","IR","KP","MO","RU","SY"].indexOf(code) >= 0;
+}
+
 async function claude() {
   const r = await get("https://claude.ai/cdn-cgi/trace");
-  if (r.error || r.status < 200 || r.status >= 400) return item("Claude", "未确认");
+  if (r.error || r.status < 200 || r.status >= 400) return item("Claude", "不可访问");
   const c = traceCode(r.body);
-  if (!c) return item("Claude", "未确认");
-  return item("Claude", ["AF","BY","CN","CU","HK","IR","KP","MO","RU","SY"].indexOf(c) >= 0 ? "受限" : "可用", flag(c));
+  return c ? item("Claude", restricted(c) ? "受限" : "可用", flag(c)) : item("Claude", "未确认");
 }
 
 async function gemini() {
   const r = await get("https://gemini.google.com/");
   if (r.error || r.status < 200 || r.status >= 400) return item("Gemini", "不可访问");
-  const m = r.body.match(/"(?:countryCode|country_code|GL)"\s*:\s*"([A-Z]{2,3})"/);
+  const m = r.body.match(/"(?:countryCode|country_code|GL)"\\s*:\\s*"([A-Z]{2,3})"/);
   if (!m) return item("Gemini", "未确认");
   const c = m[1].toUpperCase();
-  return item("Gemini", ["CN","CHN","RU","RUS","IR","IRN","KP","PRK","SY","SYR","BY","BLR","CU","CUB","HK","HKG","MO","MAC"].indexOf(c) >= 0 ? "受限" : "可用", c);
+  const blocked = ["CN","CHN","RU","RUS","IR","IRN","KP","PRK","SY","SYR","BY","BLR","CU","CUB","HK","HKG","MO","MAC"].indexOf(c) >= 0;
+  return item("Gemini", blocked ? "受限" : "可用", c);
 }
 
 async function openai() {
@@ -76,7 +69,7 @@ async function openai() {
     rs[1].body.length > 0 && webBody.indexOf("unsupported_country") < 0;
   const iosBlocked = /disallowed isp|you have been blocked/.test(iosBody);
   const iosOK = !rs[2].error && !iosBlocked &&
-    /request is not allowed\. please try again later\./.test(iosBody);
+    /request is not allowed\\. please try again later\\./.test(iosBody);
   let status = "未确认";
   if (webOK && iosOK) status = "可用";
   else if (webOK || iosOK) status = "部分可用";
@@ -88,10 +81,9 @@ async function youtube() {
   const r = await get("https://www.youtube.com/premium?hl=en");
   if (r.error || r.status < 200 || r.status >= 400) return item("YouTube", "不可访问");
   const b = r.body.toLowerCase();
-  const m = r.body.match(/"(?:GL|countryCode|country_code)"\s*:\s*"([A-Z]{2})"/);
+  const m = r.body.match(/"(?:GL|countryCode|country_code)"\\s*:\\s*"([A-Z]{2})"/);
   const c = m ? m[1] : "";
   if (/premium is not available in your (country|region)/.test(b)) return item("YouTube", "受限", flag(c));
-  if (b.indexOf("youtube premium") >= 0 || b.indexOf("ad-free") >= 0) return item("YouTube", "未确认", flag(c));
   return item("YouTube", "未确认", flag(c));
 }
 
@@ -102,8 +94,7 @@ async function netflix() {
   }));
   if (rs.some(function(r) { return r.error || !r.status; })) return item("Netflix", "未确认");
   if (rs.some(function(r) { return r.status === 403 || r.status === 451; })) return item("Netflix", "受限");
-  // A successful title-page HTTP response does not prove regional playback rights.
-  if (rs.some(function(r) { return r.status >= 200 && r.status < 400; })) return item("Netflix", "未确认");
+  // Title-page HTTP success cannot verify regional playback rights.
   return item("Netflix", "未确认");
 }
 
@@ -116,12 +107,9 @@ async function disney() {
 
 async function spotify() {
   const r = await get("https://www.spotify.com/api/content/v1/country-selector?platform=web&format=json", false);
-  if (r.error || !r.status) return item("Spotify", "未确认");
-  const loc = head(r.headers, "location");
-  const m = (loc + " " + r.body).match(/(?:\/|countryCode["': ]+)([a-z]{2})(?:-[a-z]{2})?/i);
-  const c = m ? m[1].toUpperCase() : "";
-  if (r.status === 403 || r.status === 451) return item("Spotify", "受限", flag(c));
-  return item("Spotify", r.status >= 200 && r.status < 400 && c ? "可用" : "未确认", flag(c));
+  if (r.error || !r.status) return item("Spotify", "不可访问");
+  if (r.status === 403 || r.status === 451) return item("Spotify", "受限");
+  return item("Spotify", "未确认");
 }
 
 async function tiktok() {
@@ -135,16 +123,8 @@ async function main() {
   const results = await Promise.all([
     claude(), gemini(), openai(), youtube(), netflix(), disney(), spotify(), tiktok()
   ]);
-  function pad(value, width) {
-    const str = String(value);
-    let displayWidth = 0;
-    for (let i = 0; i < str.length; i++) {
-      displayWidth += str.charCodeAt(i) > 255 ? 2 : 1;
-    }
-    return str + " ".repeat(Math.max(0, width - displayWidth));
-  }
   const lines = results.map(function(x) {
-    return pad(x.name, 10) + pad(x.status, 11) + x.region;
+    return x.name.padEnd(10, " ") + x.status.padEnd(8, " ") + x.region;
   });
   const d = new Date();
   const time = ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2);
@@ -153,9 +133,9 @@ async function main() {
   });
   $done({
     title: "AI / 海外媒体检测",
-    content: pad("服务", 10) + pad("状态", 11) + "地区\n" + lines.join("\n") +
-      "\n\n检测时间：" + time +
-      "\n说明：未确认表示请求成功但缺少可用性证据，不代表已解锁。",
+    content: "服务      状态    地区\\n" + lines.join("\\n") +
+      "\\n\\n检测时间：" + time +
+      "\\n说明：可用表示检测到明确可用信号；未确认表示现有检测无法验证账号或播放权限。",
     icon: uncertain ? "exclamationmark.triangle" : "checkmark.circle",
     "icon-color": uncertain ? "#FF9500" : "#34C759"
   });
