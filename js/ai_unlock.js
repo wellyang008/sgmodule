@@ -78,8 +78,8 @@ async function gemini() {
   if(r.error||!r.status)return item("Gemini","不可访问");
   if(r.status===403||r.status===451||/isn't supported in your country|not available in your region|not available in your country/i.test(r.body))return item("Gemini","受限");
   if(r.status<200||r.status>=400)return item("Gemini","不可访问");
-  if(!/bard|gemini|batchexecute|_basejs|accounts\\.google/i.test(r.body))return item("Gemini","未确认");
-  const m=r.body.match(/"(?:countryCode|country_code|GL)"\\s*:\\s*"([A-Z]{2})"/);
+  if(!/bard|gemini|batchexecute|_basejs|accounts\.google/i.test(r.body))return item("Gemini","未确认");
+  const m=r.body.match(/"(?:countryCode|country_code|GL)"\s*:\s*"([A-Z]{2})"/);
   return item("Gemini","可访问",flag(m?m[1]:traceCode(r.body)));
 }
 
@@ -107,10 +107,10 @@ async function openai() {
 async function youtube() {
   const r=await get("https://www.youtube.com/premium?hl=en",false);
   if(r.error||!r.status)return item("YouTube","不可访问");
-  if(r.status===403||r.status===451||/google\\.com\\/sorry|unusual traffic/i.test(r.body))return item("YouTube","受限");
+  if(r.status===403||r.status===451||/google\.com\/sorry|unusual traffic/i.test(r.body))return item("YouTube","受限");
   if(r.status<200||r.status>=400)return item("YouTube","不可访问");
   if(/premium is not available in your (country|region)/i.test(r.body))return item("YouTube","Premium受限");
-  const m=r.body.match(/"GL"\\s*:\\s*"([A-Z]{2})"/)||r.body.match(/"countryCode"\\s*:\\s*"([A-Z]{2})"/);
+  const m=r.body.match(/"GL"\s*:\s*"([A-Z]{2})"/)||r.body.match(/"countryCode"\s*:\s*"([A-Z]{2})"/);
   const code=m?m[1]:traceCode(r.body);
   return /premium_membership|premiumOffer|music_premium|YouTube Premium/i.test(r.body)?item("YouTube","可访问",flag(code)):item("YouTube","未确认",flag(code));
 }
@@ -122,10 +122,10 @@ async function netflix() {
   const rs=await Promise.all(ids.map(id=>get("https://www.netflix.com/title/"+id,false)));
   if(rs.every(r=>r.error||!r.status))return item("Netflix","不可访问");
   if(rs.some(r=>r.status===403||r.status===451))return item("Netflix","受限");
-  const available=rs.some(r=>r.status>=200&&r.status<400&&/"titleId"\\s*:\\s*"?\\d+|<title>[^<]+Netflix|application\\/ld\\+json/i.test(r.body)&&!/not available in your country|title not available/i.test(r.body));
+  const available=rs.some(r=>r.status>=200&&r.status<400&&/"titleId"\s*:\s*"?\d+|<title>[^<]+Netflix|application\/ld\+json/i.test(r.body)&&!/not available in your country|title not available/i.test(r.body));
   if(available){
     let code="";
-    rs.forEach(r=>{const m=r.body.match(/"countryCode"\\s*:\\s*"([A-Z]{2})"/i)||r.body.match(/data-country=["']([A-Z]{2})["']/i);if(!code&&m)code=m[1].toUpperCase();});
+    rs.forEach(r=>{const m=r.body.match(/"countryCode"\s*:\s*"([A-Z]{2})"/i)||r.body.match(/data-country=["']([A-Z]{2})["']/i);if(!code&&m)code=m[1].toUpperCase();});
     return item("Netflix","标题可访问",flag(code));
   }
   if(rs.every(r=>r.status===404))return item("Netflix","测试标题不可用");
@@ -165,7 +165,7 @@ async function spotify() {
   if(r.status===403||r.status===451)return item("Spotify","受限");
   if(r.status<200||r.status>=400)return item("Spotify","不可访问");
   let p=null,code="";try{p=JSON.parse(r.body);}catch(e){}
-  const m=r.body.match(/"countryCode"\\s*:\\s*"([A-Z]{2})"/i);if(m)code=m[1].toUpperCase();
+  const m=r.body.match(/"countryCode"\s*:\s*"([A-Z]{2})"/i);if(m)code=m[1].toUpperCase();
   if(/not available in your country/i.test(r.body))return item("Spotify","受限",flag(code));
   const signal=!!(p&&(Array.isArray(p.countries)||Array.isArray(p.data)||(p.countryCode&&/^[A-Z]{2}$/.test(p.countryCode))));
   return signal?item("Spotify","可访问",flag(code)):item("Spotify","未确认",flag(code));
@@ -177,14 +177,14 @@ async function tiktok() {
   const r=await get("https://www.tiktok.com/cdn-cgi/trace",false);
   let code="";
   if(!r.error&&r.status>=200&&r.status<300){
-    const m=r.body.match(/(?:^|\\n)region=([A-Z]{2})(?:\\n|$)/)||r.body.match(/(?:^|\\n)loc=([A-Z]{2})(?:\\n|$)/);
+    const m=r.body.match(/(?:^|\n)region=([A-Z]{2})(?:\n|$)/)||r.body.match(/(?:^|\n)loc=([A-Z]{2})(?:\n|$)/);
     if(m)code=m[1];
     if(code&&["AF","CN","IN","IR","KP"].indexOf(code)>=0)return item("TikTok","受限",flag(code));
   }
   const home=await get("https://www.tiktok.com/",false);
   if(home.error||!home.status)return item("TikTok","不可访问",flag(code));
   if(home.status===403||home.status===451||/access denied|not available in your region|tiktok is not available/i.test(home.body))return item("TikTok","受限",flag(code));
-  if(home.status>=200&&home.status<400&&/SIGI_STATE|__UNIVERSAL_DATA_FOR_REHYDRATION__|webapp\\.tiktok/i.test(home.body))return item("TikTok","可访问",flag(code));
+  if(home.status>=200&&home.status<400&&/SIGI_STATE|__UNIVERSAL_DATA_FOR_REHYDRATION__|webapp\.tiktok/i.test(home.body))return item("TikTok","可访问",flag(code));
   return item("TikTok","未确认",flag(code));
 }
 
