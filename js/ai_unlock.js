@@ -20,6 +20,26 @@ function get(url, redirect) {
   });
 }
 
+
+function post(url, body, headers) {
+  return new Promise(function(resolve) {
+    $httpClient.post({
+      url: url, headers: Object.assign({
+        "User-Agent": H["User-Agent"],
+        "Accept-Language": "en-US,en;q=0.9",
+        "Content-Type": "application/json"
+      }, headers || {}),
+      body: JSON.stringify(body), timeout: 15
+    }, function(err, res, data) {
+      resolve({
+        error: !!err,
+        status: res ? Number(res.status) : 0,
+        body: typeof data === "string" ? data : ""
+      });
+    });
+  });
+}
+
 function traceCode(body) {
   const m = String(body || "").match(/(?:^|\n)loc=([A-Z]{2})(?:\n|$)/);
   return m ? m[1] : "";
@@ -88,21 +108,75 @@ async function youtube() {
 }
 
 async function netflix() {
-  const ids = ["70143836", "70136120", "80057281"];
+  const ids = ["81280792", "70143836"];
   const rs = await Promise.all(ids.map(function(id) {
     return get("https://www.netflix.com/title/" + id, false);
   }));
-  if (rs.some(function(r) { return r.error || !r.status; })) return item("Netflix", "未确认");
+  if (rs.every(function(r) { return r.error || !r.status; })) return item("Netflix", "不可访问");
   if (rs.some(function(r) { return r.status === 403 || r.status === 451; })) return item("Netflix", "受限");
-  // Title-page HTTP success cannot verify regional playback rights.
-  return item("Netflix", "未确认");
+  const full = rs.some(function(r) { return /property=["']og:video["']/i.test(r.body); });
+  let region = "";
+  for (let i = 0; i < rs.length && !region; i++) {
+    const m = rs[i].body.match(/netflix\.reactContext\s*=\s*(\{[\s\S]*?\})\s*;/);
+    if (m) {
+      try {
+        const ctx = JSON.parse(m[1]);
+        region = ctx.models && ctx.models.geo && ctx.models.geo.data &&
+          ctx.models.geo.data.requestCountry && ctx.models.geo.data.requestCountry.id || "";
+      } catch (e) {}
+    }
+  }
+  if (full) return item("Netflix", "可用", flag(region));
+  if (rs.some(function(r) { return r.status >= 200 && r.status < 400 && r.body.length > 1000; }))
+    return item("Netflix", "部分可用", flag(region));
+  return item("Netflix", "未确认", flag(region));
 }
 
 async function disney() {
-  const r = await get("https://www.disneyplus.com/");
-  if (r.error || r.status < 200 || r.status >= 400) return item("Disney+", "不可访问");
-  if (/unavailable in your region|not available in your country/i.test(r.body)) return item("Disney+", "受限");
-  return item("Disney+", "未确认");
+  const ua = H["User-Agent"];
+  const auth = "ZGlzbmV5JmJyb3dzZXImMS4wLjA.Cu56AgSfBTDag5NiRA81oLHkDZfu5L3CKadnefEAY84";
+  const r = await post(
+    "https://disney.api.edge.bamgrid.com/graph/v1/device/graphql",
+    {
+      query: "mutation registerDevice($input: RegisterDeviceInput!) { registerDevice(registerDevice: $input) { grant { grantType assertion } } }",
+      variables: { input: {
+        applicationRuntime: "chrome",
+        attributes: {
+          browserName: "chrome", browserVersion: "124.0",
+          manufacturer: "apple", model: null,
+          operatingSystem: "macintosh", operatingSystemVersion: "10.15.7",
+          osDeviceIds: []
+        },
+        deviceFamily: "browser", deviceLanguage: "en",
+        deviceProfile: "macosx"
+      }}
+    },
+    { Authorization: auth }
+  );
+  if (r.error || r.status !== 200) {
+    if (r.status === 403 || r.status === 451) return item("Disney+", "受限");
+    return item("Disney+", r.error || !r.status ? "不可访问" : "未确认");
+  }
+  let data;
+  try { data = JSON.parse(r.body); } catch (e) { return item("Disney+", "未确认"); }
+  const sdk = data && data.extensions && data.extensions.sdk;
+  const session = sdk && sdk.session;
+  const region = session && session.location && session.location.countryCode || "";
+  const supported = session && session.inSupportedLocation;
+  const token = sdk && sdk.token && sdk.token.accessToken;
+  if (supported === false || supported === "false") return item("Disney+", "受限", flag(region));
+  if (!token || !region) return item("Disney+", "未确认", flag(region));
+  const q = await post(
+    "https://disney.api.edge.bamgrid.com/v1/public/graphql",
+    {
+      query: "query($preferredLanguages: [String!]!, $version: String) {globalization(version: $version) { uiLanguage(preferredLanguages: $preferredLanguages) }}",
+      variables: { version: "1.5.0", preferredLanguages: ["en"] }
+    },
+    { Authorization: token }
+  );
+  if (q.status === 200 && !q.error) return item("Disney+", "可用", flag(region));
+  if (q.status === 403 || q.status === 451) return item("Disney+", "受限", flag(region));
+  return item("Disney+", "未确认", flag(region));
 }
 
 async function spotify() {
@@ -119,15 +193,30 @@ async function tiktok() {
   return item("TikTok", "未确认");
 }
 
+function visualWidth(str) {
+  let n = 0;
+  Array.from(String(str)).forEach(function(ch) {
+    const cp = ch.codePointAt(0);
+    n += (cp >= 0x2E80 || cp >= 0xF900 || cp >= 0x1F000) ? 2 : 1;
+  });
+  return n;
+}
+function padCell(str, width) {
+  let gap = Math.max(0, width - visualWidth(str));
+  return str + "　".repeat(Math.floor(gap / 2)) + (gap % 2 ? " " : "");
+}
 async function main() {
   const results = await Promise.all([
     claude(), gemini(), openai(), youtube(), netflix(), disney(), spotify(), tiktok()
   ]);
-  // Use visible full-width spaces: tabs are not rendered consistently in Surge panels.
-  const gap = "　　　　";
+  const serviceWidth = 9;
+  const statusWidth = 8;
   const lines = results.map(function(x) {
-    return x.name + gap + x.status + gap + x.region;
+    return padCell(x.name, serviceWidth) + "　" +
+      padCell(x.status, statusWidth) + "　" + x.region;
   });
+  const header = padCell("服务", serviceWidth) + "　" +
+    padCell("状态", statusWidth) + "　地区";
   const d = new Date();
   const time = ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2);
   const uncertain = results.some(function(x) {
@@ -135,13 +224,14 @@ async function main() {
   });
   $done({
     title: "AI / 海外媒体检测",
-    content: "服务" + gap + "状态" + gap + "地区\n" + lines.join("\n") +
+    content: header + "\n" + lines.join("\n") +
       "\n\n检测时间：" + time +
-      "\n说明：未确认表示检测信号不足，不代表服务不可用；地区为服务响应中识别到的地区。",
+      "\n说明：可用表示服务专用检测通过；部分可用表示仅检测到部分内容；未确认表示无法取得足够信号。",
     icon: uncertain ? "exclamationmark.triangle" : "checkmark.circle",
     "icon-color": uncertain ? "#FF9500" : "#34C759"
   });
 }
+
 main().catch(function(e) {
   $done({
     title: "AI / 海外媒体检测",
