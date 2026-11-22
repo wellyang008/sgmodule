@@ -103,7 +103,7 @@ async function regionFor(host) {
 // AI checks: verifies the actual product entry point and explicit regional blocks.
 // It does not claim that an unauthenticated account can send prompts.
 async function aiCheck(name, host, url, markers) {
-  const pair = await Promise.all([get(url, false), regionFor(host)]);
+  const pair = await Promise.all([get(url, true), regionFor(host)]);
   const r = pair[0], country = pair[1];
   const region = countryFlag(country);
   if (isBlocked(r)) return result(name, "地区受限", region);
@@ -145,7 +145,7 @@ async function openai() {
 async function youtube() {
   const videoId = "jNQXAC9IVRw";
   const pair = await Promise.all([
-    get("https://www.youtube.com/watch?v=" + videoId + "&hl=en", false),
+    get("https://www.youtube.com/watch?v=" + videoId + "&hl=en", true),
     regionFor("www.youtube.com")
   ]);
   const page = pair[0], region = countryFlag(pair[1]);
