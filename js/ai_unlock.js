@@ -170,7 +170,7 @@ async function netflix() {
   if (rs.every(isBlocked)) return result("Netflix", "地区受限", region);
   let visible = 0;
   rs.forEach(function(r, i) {
-    if (isReachable(r) && (r.body.indexOf(ids[i]) >= 0 || /netflix/i.test(r.body))) visible++;
+    if (isReachable(r) && r.body.indexOf(ids[i]) >= 0) visible++;
   });
   if (visible === ids.length) return result("Netflix", "测试内容可访问", region);
   if (visible > 0) return result("Netflix", "部分内容可访问", region);
@@ -223,7 +223,7 @@ async function spotify() {
   const r = pair[0], region = countryFlag(pair[1]);
   if (isBlocked(r)) return result("Spotify", "地区受限", region);
   if (r.error || !r.status) return result("Spotify", "不可访问", region);
-  if (isReachable(r) && /spotify|4uLU6hMCjMI75M1A2tKUQC/i.test(r.body)) {
+  if (isReachable(r) && /4uLU6hMCjMI75M1A2tKUQC/i.test(r.body)) {
     return result("Spotify", "曲目页可访问", region);
   }
   return result("Spotify", "未确认", region);
